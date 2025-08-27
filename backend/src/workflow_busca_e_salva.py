@@ -1,10 +1,13 @@
 
+
 import json
+from sqlalchemy.orm import Session
 
 # As importações agora são absolutas a partir da pasta 'backend' onde o comando será executado.
 from src.agents.agente_busca import agente_busca
 from src.agents.agente_tratamento import agente_tratamento
-from src.database import engine, Base
+from src.database import engine, Base, get_db # Importa get_db
+from src import models # Importa models para a verificação
 
 def executar_workflow():
     """
@@ -26,12 +29,14 @@ def executar_workflow():
     
     print("Agente de Busca concluiu. Resultado recebido.")
 
-    # 3. Verificar o resultado e acionar o Agente de Tratamento
+    # 3. Extrair o resultado da ferramenta e acionar o Agente de Tratamento
     try:
-        # Tenta carregar o JSON para verificar se é válido e não é uma mensagem de erro
-        dados = json.loads(resultado_busca_json)
+        # Confirmado pela depuração: o resultado fica no atributo 'result'
+        tool_result = resultado_busca_json.tools[0].result
+        dados = json.loads(tool_result)
+
         if isinstance(dados, dict) and "erro" in dados:
-            print(f"\nO Agente de Busca retornou um erro: {dados['erro']}")
+            print(f"\nO Agente de Busca retornou uma mensagem de erro: {dados.get('detalhes', dados['erro'])}")
             print("Workflow interrompido.")
             return
         if not dados:
@@ -39,18 +44,37 @@ def executar_workflow():
              print("Workflow concluído sem novas licitações.")
              return
 
-    except json.JSONDecodeError:
-        print(f"\nO Agente de Busca retornou uma resposta que não é JSON: {resultado_busca_json}")
+    except (json.JSONDecodeError, AttributeError, IndexError) as e:
+        print(f"\nFalha ao extrair ou decodificar o resultado do Agente de Busca.")
+        print(f"Erro: {e}")
+        print("Resposta completa do agente:", resultado_busca_json)
         print("Workflow interrompido.")
         return
 
+    # Convertemos os dados para uma string JSON para passar ao próximo agente
+    dados_para_tratamento = json.dumps(dados, indent=2, ensure_ascii=False)
+
+    # Criamos um prompt explícito para o agente de tratamento
+    prompt_tratamento = f"""Por favor, salve os seguintes dados de licitações no banco de dados usando sua ferramenta. Dados JSON: {dados_para_tratamento}"""
+
     print(f"\n[PASSO 2/2] Acionando o Agente de Tratamento para salvar os dados...")
-    resultado_tratamento = agente_tratamento.run(resultado_busca_json)
+    resultado_tratamento = agente_tratamento.run(prompt_tratamento)
 
     # 4. Imprimir o resultado final
     print("\n--- WORKFLOW CONCLUÍDO ---")
     print("Resultado final do Agente de Tratamento:")
     print(resultado_tratamento)
+
+    # --- VERIFICAÇÃO IMEDIATA APÓS SALVAR ---
+    try:
+        print("\n--- Verificação imediata: Contando licitações no banco de dados ---")
+        db_verify: Session = next(get_db())
+        count_verify = db_verify.query(models.Licitacao).count()
+        print(f">>> Verificação: Encontrado(s) {count_verify} registro(s) na tabela 'licitacoes'.")
+        db_verify.close()
+    except Exception as e:
+        print(f"Erro durante a verificação imediata: {e}")
+    # --- FIM DA VERIFICAÇÃO IMEDIATA ---
 
 if __name__ == "__main__":
     executar_workflow()

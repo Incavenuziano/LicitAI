@@ -1,14 +1,25 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import psycopg2
 import os
 
-# A URL de conexão é montada a partir de variáveis de ambiente
-# que devem ser definidas no seu ambiente (ex: .env ou docker-compose.yml)
-# postgresql://user:password@host/database
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost/licitai") + "?client_encoding=utf8"
+# --- Nova abordagem de conexão para evitar bug de unicode ---
+# Em vez de usar uma URL, usamos uma função "creator" para passar
+# os parâmetros de conexão separadamente.
 
-engine = create_engine(DATABASE_URL)
+def get_connection():
+    return psycopg2.connect(
+        host="localhost",
+        port="5433",
+        database="licitai",
+        user="licitai_user",
+        password="licitai_password", # Usando a senha padrão do arquivo original
+        client_encoding="utf8"
+    )
+
+# A URL agora é genérica, pois o "creator" cuidará da conexão.
+engine = create_engine("postgresql+psycopg2://", creator=get_connection)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

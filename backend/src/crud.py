@@ -38,3 +38,9 @@ def create_licitacao(db: Session, licitacao: schemas.LicitacaoCreate) -> models.
     db.commit()
     db.refresh(db_licitacao)
     return db_licitacao
+
+def get_licitacoes(db: Session, skip: int = 0, limit: int = 100):
+    """
+    Retorna uma lista de licitações do banco de dados, com paginação.
+    """
+    return db.query(models.Licitacao).offset(skip).limit(limit).all()

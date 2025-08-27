@@ -1,0 +1,9 @@
+(venv) PS C:\Users\pcdan\Licita_Facil\LicitAI> python -m backend.src.workflow_completo
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\pcdan\Licita_Facil\LicitAI\backend\src\workflow_completo.py", line 3, in <module>       
+    from .agents.agente_tratamento import agente_tratamento
+  File "C:\Users\pcdan\Licita_Facil\LicitAI\backend\src\agents\agente_tratamento.py", line 6, in <module>
+    from src import crud, schemas, database
+ModuleNotFoundError: No module named 'src'
