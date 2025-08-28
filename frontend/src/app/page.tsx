@@ -3,9 +3,17 @@
 import LicitacoesTabela from '@/components/LicitacoesTabela';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // Import useRouter
 
 export default function Home() {
   const { data: session, status } = useSession();
+  const router = useRouter(); // Initialize useRouter
+
+  // Redirect to login if unauthenticated
+  if (status === 'unauthenticated') {
+    router.push('/login');
+    return null; // Or a loading spinner, to prevent flickering
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
@@ -22,16 +30,6 @@ export default function Home() {
       </div>
 
       {status === 'loading' && <p>Carregando sessão...</p>}
-
-      {status === 'unauthenticated' && (
-        <div className="text-center w-full p-12 border rounded-lg">
-          <h2 className="text-xl font-semibold mb-4">Acesso Restrito</h2>
-          <p className="mb-6">Por favor, faça login para ver as licitações.</p>
-          <Link href="/login" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-            Fazer Login
-          </Link>
-        </div>
-      )}
 
       {status === 'authenticated' && (
         <div className="w-full">
