@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, DateTime, Numeric, Text
-from .database import Base  # Importa o Base do nosso arquivo database.py
+from sqlalchemy import Column, Integer, String, DateTime, Numeric, Text, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from .database import Base
 
 class User(Base):
     __tablename__ = "users"
-
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
@@ -11,7 +12,6 @@ class User(Base):
 
 class Licitacao(Base):
     __tablename__ = "licitacoes"
-
     id = Column(Integer, primary_key=True, index=True)
     numero_controle_pncp = Column(String, unique=True, index=True, nullable=False)
     ano_compra = Column(Integer)
@@ -26,3 +26,19 @@ class Licitacao(Base):
     data_publicacao_pncp = Column(DateTime)
     data_encerramento_proposta = Column(DateTime)
     link_sistema_origem = Column(String)
+    
+    # Relacionamento com a tabela de Análises
+    analises = relationship("Analise", back_populates="licitacao")
+
+class Analise(Base):
+    __tablename__ = "analises"
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String, nullable=False, default="Pendente")
+    resultado = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    licitacao_id = Column(Integer, ForeignKey("licitacoes.id"))
+    
+    # Relacionamento com a tabela de Licitações
+    licitacao = relationship("Licitacao", back_populates="analises")

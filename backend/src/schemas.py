@@ -1,8 +1,7 @@
-
 from pydantic import BaseModel
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
 # --- Esquemas para Usuário ---
 
@@ -18,6 +17,26 @@ class User(UserBase):
 
     class Config:
         from_attributes = True
+
+# --- Esquemas para Análise ---
+# Definido antes de Licitação para que Licitação possa referenciá-lo
+
+class AnaliseBase(BaseModel):
+    status: str = "Pendente"
+    resultado: Optional[str] = None
+
+class AnaliseCreate(AnaliseBase):
+    licitacao_id: int
+
+class Analise(AnaliseBase):
+    id: int
+    licitacao_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
 
 # --- Esquemas para Licitação ---
 
@@ -41,6 +60,12 @@ class LicitacaoCreate(LicitacaoBase):
 
 class Licitacao(LicitacaoBase):
     id: int
+    analises: List[Analise] = [] # Relacionamento com Análises
 
     class Config:
         from_attributes = True
+
+# --- Esquemas para Requisições --- 
+
+class AnaliseRequest(BaseModel):
+    licitacao_ids: List[int]

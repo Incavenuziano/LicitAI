@@ -20,3 +20,21 @@ export const getLicitacoes = async (): Promise<Licitacao[]> => {
     return [];
   }
 };
+
+export const requestAnalises = async (licitacao_ids: number[]): Promise<any> => {
+  const response = await fetch('http://localhost:8000/analises/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ licitacao_ids }),
+  });
+
+  if (!response.ok) {
+    // Lança um erro se a resposta não for bem-sucedida, para que o componente possa tratar.
+    const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido ao solicitar análise' }));
+    throw new Error(errorData.detail);
+  }
+
+  return response.json();
+};

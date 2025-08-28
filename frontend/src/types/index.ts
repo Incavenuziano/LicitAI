@@ -1,3 +1,12 @@
+export type Analise = {
+  id: number;
+  licitacao_id: number;
+  status: string;
+  resultado: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Licitacao = {
   id: number;
   numero_controle_pncp: string;
@@ -13,4 +22,5 @@ export type Licitacao = {
   data_publicacao_pncp: string | null;
   data_encerramento_proposta: string | null;
   link_sistema_origem: string | null;
+  analises: Analise[]; // Array de análises associadas
 };
