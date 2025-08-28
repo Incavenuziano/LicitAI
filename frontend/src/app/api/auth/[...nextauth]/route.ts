@@ -5,6 +5,7 @@ import CredentialsProvider from "next-auth/providers/credentials"
 interface ApiUser {
   id: number;
   email: string;
+  nickname: string | null;
 }
 
 export const authOptions: AuthOptions = {
@@ -56,19 +57,22 @@ export const authOptions: AuthOptions = {
     // O callback 'jwt' é chamado ao criar ou atualizar um JSON Web Token.
     async jwt({ token, user }) {
       // O objeto 'user' só está presente no primeiro login.
-      // Adicionamos o ID do usuário ao token para que ele persista.
+      // Persistimos os dados do usuário (id e nickname) no token.
       if (user) {
-        token.id = (user as ApiUser).id;
+        const apiUser = user as ApiUser;
+        token.id = apiUser.id;
+        token.nickname = apiUser.nickname;
       }
       return token;
     },
     // O callback 'session' é chamado quando um cliente verifica a sessão.
     async session({ session, token }) {
-      // Adicionamos o ID do usuário do token para o objeto da sessão do cliente.
+      // Adicionamos os dados do token (id e nickname) para o objeto da sessão do cliente.
       if (session.user) {
-        // O TypeScript precisa que a gente estenda o tipo 'Session' para reconhecer 'id'.
-        // Faremos isso no próximo passo. Por enquanto, usamos 'as any'.
-        (session.user as any).id = token.id; 
+        // O TypeScript precisa que a gente estenda o tipo 'Session' para reconhecer as novas propriedades.
+        // Faremos isso no próximo passo.
+        (session.user as any).id = token.id;
+        (session.user as any).nickname = token.nickname;
       }
       return session;
     }

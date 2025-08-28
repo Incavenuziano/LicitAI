@@ -21,7 +21,7 @@ export default function Home() {
         <h1 className="text-2xl font-bold">LicitAI</h1>
         {status === 'authenticated' && session.user && (
           <div className="flex items-center">
-            <span>Bem-vindo, {session.user.email}</span>
+            <span>Bem-vindo, {session.user.nickname || session.user.email}</span>
             <button onClick={() => signOut()} className="ml-4 bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
               Sair
             </button>

@@ -52,8 +52,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 @app.get("/licitacoes", response_model=List[schemas.Licitacao])
-def read_licitacoes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    licitacoes = crud.get_licitacoes(db, skip=skip, limit=limit)
+def read_licitacoes(skip: int = 0, db: Session = Depends(get_db)):
+    licitacoes = crud.get_licitacoes(db, skip=skip)
     return licitacoes
 
 

@@ -3,8 +3,7 @@
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import AuthLayoutV2 from '@/components/AuthLayoutV2'; // Import AuthLayoutV2
-import Link from 'next/link'; // Ensure Link is imported
+import Image from 'next/image'; // Import the Next.js Image component
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -31,56 +30,90 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthLayoutV2
-      title="Login"
-      subtitle="Enter your account details"
-      visualTitle="Bem vindo(a) de volta"
-      visualSubtitle="Acesse sua conta para gerenciar suas licitações de forma inteligente e eficiente."
-    >
-      <form onSubmit={handleSubmit} className="space-y-6"> {/* Removed w-full as it's handled by AuthLayoutV2's inner div */}
-        {error && <p className="bg-red-100 text-red-700 p-3 mb-4 rounded text-sm">{error}</p>}
-        
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
-          <input
-            type="email"
-            id="email"
-            name="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 block w-full px-4 py-3 border-b-2 border-gray-300 bg-transparent text-gray-900 focus:outline-none focus:border-licitai-primary"
-            placeholder="seu@email.com"
-          />
+    // Container principal do layout de duas colunas
+    <div className="flex flex-col md:flex-row min-h-screen bg-[#F0F5F9]">
+
+      {/* Seção da Esquerda (Formulário) */}
+      <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-12">
+        <div className="w-full max-w-sm">
+          <h1 className="text-3xl font-bold text-[#003366] mb-2">Login</h1>
+          <p className="text-sm text-gray-500 mb-8">Enter your account details</p>
+
+          {/* Exibição de erro */}
+          {error && <p className="bg-red-100 text-red-700 p-3 mb-4 rounded text-sm">{error}</p>}
+
+          {/* Formulário */}
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
+              <input
+                type="email"
+                id="email"
+                name="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="seu@email.com"
+                className="mt-1 block w-full px-4 py-3 border-b-2 border-gray-300 bg-transparent text-gray-900 focus:outline-none focus:border-[#003366]"
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
+              <input
+                type="password"
+                id="password"
+                name="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1 block w-full px-4 py-3 border-b-2 border-gray-300 bg-transparent text-gray-900 focus:outline-none focus:border-[#003366]"
+              />
+            </div>
+            
+            {/* Botão de Login */}
+            <button
+              type="submit"
+              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-[#005588] hover:bg-[#003366] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#003366] transition-all duration-200"
+            >
+              Login
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Seção da Direita (Elementos Visuais e Logo) */}
+      <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-12 bg-[#D1F2EB] relative overflow-hidden">
+        {/* Elementos de "blob" de fundo para o efeito da imagem */}
+        <div className="absolute inset-0 bg-no-repeat bg-contain bg-center opacity-40">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 320" className="absolute top-0 left-0 w-full h-full">
+            <path fill="#C0EEDD" fillOpacity="1" d="M0,192L48,181.3C96,171,192,149,288,138.7C384,128,480,128,576,149.3C672,171,768,213,864,229.3C960,245,1056,235,1152,213.3C1248,192,1344,160,1392,144L1440,128L1440,0L1392,0C1344,0,1248,0,1152,0C1056,0,960,0,864,0C768,0,672,0,576,0C480,0,384,0,288,0C192,0,96,0,48,0L0,0Z"></path>
+            <path fill="#A0E0C0" fillOpacity="1" d="M0,32L48,53.3C96,75,192,117,288,144C384,171,480,181,576,176C672,171,768,149,864,133.3C960,117,1056,107,1152,112C1248,117,1344,139,1392,149.3L1440,160L1440,0L1392,0C1344,0,1248,0,1152,0C1056,0,960,0,864,0C768,0,672,0,576,0C480,0,384,0,288,0C192,0,96,0,48,0L0,0Z"></path>
+          </svg>
         </div>
         
-        <div>
-          <div className="flex items-center justify-between">
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
-            <Link href="#" className="font-medium text-licitai-primary hover:text-licitai-secondary">
-              Forgot Password?
-            </Link>
+        {/* Conteúdo do lado direito */}
+        <div className="relative z-10 text-center">
+          <h1 className="text-4xl md:text-5xl font-bold text-[#003366] mb-4">
+            Bem vindo(a) de volta
+          </h1>
+          <p className="text-sm md:text-base text-[#005588] mb-8 max-w-sm">
+            Acesse sua conta para gerenciar suas licitações de forma inteligente e eficiente.
+          </p>
+
+          {/* Logo */}
+          <div className="w-64 h-64 mx-auto mb-8">
+            <Image
+              src="/logo_licitai.png"
+              alt="LicitAI Logo"
+              width={256}
+              height={256}
+              className="w-full h-full object-contain"
+            />
           </div>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 block w-full px-4 py-3 border-b-2 border-gray-300 bg-transparent text-gray-900 focus:outline-none focus:border-licitai-primary"
-          />
         </div>
-        
-        <button
-          type="submit"
-          className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-licitai-secondary hover:bg-licitai-primary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-licitai-primary transition-all duration-200"
-        >
-          Login
-        </button>
-      </form>
-    </AuthLayoutV2>
+      </div>
+    </div>
   );
 }

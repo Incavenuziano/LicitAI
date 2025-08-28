@@ -12,7 +12,8 @@ declare module 'next-auth' {
    */
   interface Session {
     user?: {
-      id?: number; // Adicionamos o ID do usuário aqui
+      id?: number | null;
+      nickname?: string | null;
     } & DefaultSession['user']; // Mantém os campos padrão (name, email, image)
   }
 
@@ -20,7 +21,8 @@ declare module 'next-auth' {
    * O objeto `User` retornado pela função `authorize` do provider.
    */
   interface User {
-    id?: number;
+    id?: number | null;
+    nickname?: string | null;
   }
 }
 
@@ -29,6 +31,7 @@ declare module 'next-auth/jwt' {
    * O token JWT decodificado.
    */
   interface JWT {
-    id?: number; // Adicionamos o ID do usuário ao token
+    id?: number | null;
+    nickname?: string | null;
   }
 }

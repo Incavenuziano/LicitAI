@@ -8,6 +8,7 @@ from typing import Optional
 
 class UserBase(BaseModel):
     email: str
+    nickname: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str

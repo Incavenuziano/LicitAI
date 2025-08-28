@@ -19,7 +19,7 @@ def get_user_by_email(db: Session, email: str):
 
 def create_user(db: Session, user: schemas.UserCreate):
     hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=user.email, hashed_password=hashed_password)
+    db_user = models.User(email=user.email, hashed_password=hashed_password, nickname=user.nickname)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -42,8 +42,8 @@ def create_licitacao(db: Session, licitacao: schemas.LicitacaoCreate) -> models.
     db.refresh(db_licitacao)
     return db_licitacao
 
-def get_licitacoes(db: Session, skip: int = 0, limit: int = 100):
+def get_licitacoes(db: Session, skip: int = 0):
     """
-    Retorna uma lista de licitações do banco de dados, com paginação.
+    Retorna uma lista de licitações do banco de dados.
     """
-    return db.query(models.Licitacao).offset(skip).limit(limit).all()
+    return db.query(models.Licitacao).offset(skip).all()
