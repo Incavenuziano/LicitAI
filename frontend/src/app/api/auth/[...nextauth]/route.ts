@@ -1,7 +1,7 @@
-import NextAuth, { AuthOptions } from "next-auth"
+﻿import NextAuth, { AuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 
-// O tipo de usuário que nossa API retorna após o login bem-sucedido
+// O tipo de usuÃ¡rio que nossa API retorna apÃ³s o login bem-sucedido
 interface ApiUser {
   id: number;
   email: string;
@@ -21,18 +21,24 @@ export const authOptions: AuthOptions = {
           return null;
         }
 
-        // O backend com OAuth2PasswordRequestForm espera dados de formulário, não JSON.
+        // O backend com OAuth2PasswordRequestForm espera dados de formulÃ¡rio, nÃ£o JSON.
         const formData = new URLSearchParams();
-        formData.append('username', credentials.email); // O formulário do FastAPI usa 'username' para o email.
+        formData.append('username', credentials.email); // O formulÃ¡rio do FastAPI usa 'username' para o email.
         formData.append('password', credentials.password);
 
         try {
           const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const controller = new AbortController();
+          const timeoutMs = Number(process.env.NEXTAUTH_LOGIN_TIMEOUT_MS || 10000);
+          const t = setTimeout(() => controller.abort(), timeoutMs);
           const res = await fetch(`${baseUrl}/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: formData.toString(),
+            signal: controller.signal,
+            cache: 'no-store',
           });
+          clearTimeout(t);
 
           if (!res.ok) {
             console.error("Falha no login, status:", res.status);
@@ -41,24 +47,24 @@ export const authOptions: AuthOptions = {
 
           const user: ApiUser = await res.json();
 
-          // Se a resposta for bem-sucedida e tivermos um usuário, retorne-o.
+          // Se a resposta for bem-sucedida e tivermos um usuÃ¡rio, retorne-o.
           if (user) {
             return user;
           } else {
             return null;
           }
         } catch (error) {
-          console.error("Erro de rede ou conexão ao tentar fazer login:", error);
+          console.error("Erro de rede ou conexÃ£o ao tentar fazer login:", error);
           return null;
         }
       }
     })
   ],
   callbacks: {
-    // O callback 'jwt' é chamado ao criar ou atualizar um JSON Web Token.
+    // O callback 'jwt' Ã© chamado ao criar ou atualizar um JSON Web Token.
     async jwt({ token, user }) {
-      // O objeto 'user' só está presente no primeiro login.
-      // Persistimos os dados do usuário (id e nickname) no token.
+      // O objeto 'user' sÃ³ estÃ¡ presente no primeiro login.
+      // Persistimos os dados do usuÃ¡rio (id e nickname) no token.
       if (user) {
         const apiUser = user as ApiUser;
         token.id = apiUser.id;
@@ -66,12 +72,12 @@ export const authOptions: AuthOptions = {
       }
       return token;
     },
-    // O callback 'session' é chamado quando um cliente verifica a sessão.
+    // O callback 'session' Ã© chamado quando um cliente verifica a sessÃ£o.
     async session({ session, token }) {
-      // Adicionamos os dados do token (id e nickname) para o objeto da sessão do cliente.
+      // Adicionamos os dados do token (id e nickname) para o objeto da sessÃ£o do cliente.
       if (session.user) {
         // O TypeScript precisa que a gente estenda o tipo 'Session' para reconhecer as novas propriedades.
-        // Faremos isso no próximo passo.
+        // Faremos isso no prÃ³ximo passo.
         (session.user as any).id = token.id;
         (session.user as any).nickname = token.nickname;
       }
@@ -87,3 +93,4 @@ export const authOptions: AuthOptions = {
 const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
+

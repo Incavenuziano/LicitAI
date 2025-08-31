@@ -1,9 +1,11 @@
-import time
+﻿import time
 import traceback
 import re
 import os
 import shutil
 import subprocess
+import hashlib
+from pathlib import Path
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any
 import json
@@ -18,12 +20,12 @@ from .agents.agente_analise import analisar_licitacoes_com_pandas
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover
-    requests = None  # Fallback se não instalado
+    requests = None  # Fallback se nÃ£o instalado
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
 except Exception:  # pragma: no cover
-    BeautifulSoup = None  # Fallback se não instalado
+    BeautifulSoup = None  # Fallback se nÃ£o instalado
 
 try:
     import pdfplumber  # type: ignore
@@ -47,8 +49,50 @@ except Exception:  # pragma: no cover
     Image = None
 
 
+# --- ConfiguraÃ§Ãµes e utilitÃ¡rios de cache/paths ---
+_BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
+_CACHE_DIR = Path(os.getenv("OCR_CACHE_DIR", _BASE_DIR / "tmp" / "ocr_cache"))
+_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_CACHE_TTL = int(os.getenv("OCR_CACHE_TTL", "259200"))  # 3 dias por padrÃ£o
+
+
+def _cache_key(url: str) -> str:
+    m = hashlib.sha256()
+    m.update(url.encode("utf-8", errors="ignore"))
+    return m.hexdigest()
+
+
+def _cache_path(url: str) -> Path:
+    return _CACHE_DIR / f"{_cache_key(url)}.json"
+
+
+def _cache_get(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        p = _cache_path(url)
+        if not p.exists():
+            return None
+        raw = p.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        ts = float(data.get("ts", 0))
+        if time.time() - ts > _CACHE_TTL:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _cache_put(url: str, payload: Dict[str, Any]) -> None:
+    try:
+        payload = dict(payload)
+        payload["ts"] = time.time()
+        p = _cache_path(url)
+        p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _fetch_url(url: str, timeout: int = 25) -> Tuple[Optional[bytes], str]:
-    """Baixa conteúdo do URL. Retorna (bytes, content_type)."""
+    """Baixa conteÃºdo do URL. Retorna (bytes, content_type)."""
     if not requests:
         return None, ""
     try:
@@ -62,12 +106,20 @@ def _fetch_url(url: str, timeout: int = 25) -> Tuple[Optional[bytes], str]:
 
 
 def _extract_text_from_pdf(data: bytes) -> Optional[str]:
-    """Extrai texto de PDF priorizando pdfplumber; fallback para pypdf."""
+    """Extrai texto de PDF priorizando pdfplumber; fallback para pypdf.
+
+    HeurÃ­sticas: tenta senha vazia em PDFs protegidos antes da extraÃ§Ã£o.
+    """
     # 1) Tenta com pdfplumber (mais robusto para layout)
     if pdfplumber is not None:
         try:
             texts: list[str] = []
-            with pdfplumber.open(BytesIO(data)) as pdf:
+            # Tenta abrir com password vazio primeiro
+            try:
+                pdf = pdfplumber.open(BytesIO(data), password="")
+            except Exception:
+                pdf = pdfplumber.open(BytesIO(data))
+            with pdf:
                 for page in pdf.pages:
                     try:
                         txt = page.extract_text() or ""
@@ -85,6 +137,14 @@ def _extract_text_from_pdf(data: bytes) -> Optional[str]:
     if pypdf is not None:
         try:
             reader = pypdf.PdfReader(BytesIO(data))
+            try:
+                if getattr(reader, "is_encrypted", False):
+                    try:
+                        reader.decrypt("")  # tenta senha vazia
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             texts = []
             for page in reader.pages:
                 try:
@@ -103,7 +163,7 @@ def _extract_text_from_pdf(data: bytes) -> Optional[str]:
 def _extract_text_from_html(data: bytes) -> Optional[str]:
     if BeautifulSoup is None:
         try:
-            # Fallback básico: remove tags com regex simples (não perfeito)
+            # Fallback bÃ¡sico: remove tags com regex simples (nÃ£o perfeito)
             html = data.decode("utf-8", errors="ignore")
             return re.sub(r"<[^>]+>", " ", html)
         except Exception:
@@ -120,12 +180,12 @@ def _extract_text_from_html(data: bytes) -> Optional[str]:
 
 
 def _analisar_texto_edital(texto: str) -> str:
-    """Extrai alguns itens úteis do texto do edital e monta um resumo."""
+    """Extrai alguns itens Ãºteis do texto do edital e monta um resumo."""
     lower = texto.lower()
     def norm(s: str) -> str:
         return s
 
-    # Valores monetários (R$ 1.234,56)
+    # Valores monetÃ¡rios (R$ 1.234,56)
     valores = re.findall(r"R\$\s?[\d\.]{1,12},\d{2}", texto)
     valores_unicos = sorted(set(valores))[:10]
 
@@ -133,38 +193,38 @@ def _analisar_texto_edital(texto: str) -> str:
     datas = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", texto)
     datas_unicas = sorted(set(datas))[:10]
 
-    # Palavras‑chave
+    # Palavrasâ€‘chave
     chaves = {
-        "modalidade": any(k in lower for k in ["pregão", "pregao", "tomada de preços", "concorrência", "dispensa"]),
+        "modalidade": any(k in lower for k in ["pregÃ£o", "pregao", "tomada de preÃ§os", "concorrÃªncia", "dispensa"]),
         "habilitacao": ("habilita" in lower),
         "objeto": ("objeto" in lower or "do objeto" in lower),
-        "vigencia": ("vigência" in lower or "vigencia" in lower),
+        "vigencia": ("vigÃªncia" in lower or "vigencia" in lower),
         "proposta": ("proposta" in lower),
     }
 
-    # Classificação simples (Serviço vs Aquisição)
-    servico_kw = ["serviç", "servic", "execuç", "execuc", "manuten", "consultor"]
-    aquis_kw = ["aquisiç", "aquisic", "compra", "fornecimento", "material", "equipamento"]
-    tipo = "Serviço" if any(k in lower for k in servico_kw) else ("Aquisição" if any(k in lower for k in aquis_kw) else "Outros")
+    # ClassificaÃ§Ã£o simples (ServiÃ§o vs AquisiÃ§Ã£o)
+    servico_kw = ["serviÃ§", "servic", "execuÃ§", "execuc", "manuten", "consultor"]
+    aquis_kw = ["aquisiÃ§", "aquisic", "compra", "fornecimento", "material", "equipamento"]
+    tipo = "ServiÃ§o" if any(k in lower for k in servico_kw) else ("AquisiÃ§Ã£o" if any(k in lower for k in aquis_kw) else "Outros")
 
     partes = [
-        "--- Resumo automático do edital ---",
+        "--- Resumo automÃ¡tico do edital ---",
         f"Tamanho do texto: ~{len(texto):,} caracteres",
-        f"Classificação sugerida: {tipo}",
-        f"Valores monetários (amostra): {', '.join(valores_unicos) if valores_unicos else 'não encontrados'}",
-        f"Datas encontradas (amostra): {', '.join(datas_unicas) if datas_unicas else 'não encontradas'}",
-        "Indicadores de conteúdo:",
-        f" - Modalidade mencionada: {'sim' if chaves['modalidade'] else 'não'}",
-        f" - Habilitação: {'sim' if chaves['habilitacao'] else 'não'}",
-        f" - Objeto: {'sim' if chaves['objeto'] else 'não'}",
-        f" - Vigência: {'sim' if chaves['vigencia'] else 'não'}",
-        f" - Proposta: {'sim' if chaves['proposta'] else 'não'}",
+        f"ClassificaÃ§Ã£o sugerida: {tipo}",
+        f"Valores monetÃ¡rios (amostra): {', '.join(valores_unicos) if valores_unicos else 'nÃ£o encontrados'}",
+        f"Datas encontradas (amostra): {', '.join(datas_unicas) if datas_unicas else 'nÃ£o encontradas'}",
+        "Indicadores de conteÃºdo:",
+        f" - Modalidade mencionada: {'sim' if chaves['modalidade'] else 'nÃ£o'}",
+        f" - HabilitaÃ§Ã£o: {'sim' if chaves['habilitacao'] else 'nÃ£o'}",
+        f" - Objeto: {'sim' if chaves['objeto'] else 'nÃ£o'}",
+        f" - VigÃªncia: {'sim' if chaves['vigencia'] else 'nÃ£o'}",
+        f" - Proposta: {'sim' if chaves['proposta'] else 'nÃ£o'}",
     ]
     return "\n".join(partes)
 
 
 def _find_pdf_links_from_html(data: bytes, base_url: str) -> list[str]:
-    """Procura links de PDF em uma página HTML e retorna URLs absolutas."""
+    """Procura links de PDF em uma pÃ¡gina HTML e retorna URLs absolutas."""
     links: list[str] = []
     html = None
     try:
@@ -182,7 +242,7 @@ def _find_pdf_links_from_html(data: bytes, base_url: str) -> list[str]:
                     continue
                 text = (a.get_text() or "").lower()
                 hrefs.append(href)
-                # Preferir âncoras com palavras-chave
+                # Preferir Ã¢ncoras com palavras-chave
                 if href.lower().endswith(".pdf") or \
                    ("pdf" in href.lower()) or \
                    ("edital" in text) or ("anexo" in text) or ("download" in text):
@@ -190,7 +250,7 @@ def _find_pdf_links_from_html(data: bytes, base_url: str) -> list[str]:
         except Exception:
             pass
 
-    # Fallback rápido via regex
+    # Fallback rÃ¡pido via regex
     try:
         regex_links = re.findall(r"href=\"([^\"]+)\"|href='([^']+)'", html, flags=re.I)
         for a, b in regex_links:
@@ -261,7 +321,7 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
 
     servico_kw = ["servico", "execucao", "manutenc", "consultor", "obra", "projeto"]
     aquis_kw = ["aquisic", "compra", "fornecimento", "material", "equipamento"]
-    tipo = "Serviço" if any(k in norm for k in servico_kw) else ("Aquisição" if any(k in norm for k in aquis_kw) else "Outros")
+    tipo = "ServiÃ§o" if any(k in norm for k in servico_kw) else ("AquisiÃ§Ã£o" if any(k in norm for k in aquis_kw) else "Outros")
 
     flags = {
         "exige_visita_tecnica": ("visita tecnica" in norm or "vistoria tecnica" in norm),
@@ -273,29 +333,29 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
 
     modalidade = None
     if "pregao" in norm:
-        modalidade = "Pregão"
+        modalidade = "PregÃ£o"
     elif "concorrencia" in norm:
-        modalidade = "Concorrência"
+        modalidade = "ConcorrÃªncia"
     elif "tomada de preco" in norm:
-        modalidade = "Tomada de Preços"
+        modalidade = "Tomada de PreÃ§os"
     elif "dispensa" in norm:
         modalidade = "Dispensa"
 
     objeto = _extrair_objeto(texto)
 
     resumo_partes = [
-        "--- Resumo automático do edital ---",
+        "--- Resumo automÃ¡tico do edital ---",
         f"Tamanho do texto: ~{len(texto):,} caracteres",
-        f"Classificação sugerida: {tipo}",
-        f"Modalidade (heurística): {modalidade or 'indefinida'}",
-        f"Maior valor (amostra): {maior_valor or 'não identificado'}",
-        f"Datas encontradas (amostra): {', '.join(datas_unicas) if datas_unicas else 'não encontradas'}",
+        f"ClassificaÃ§Ã£o sugerida: {tipo}",
+        f"Modalidade (heurÃ­stica): {modalidade or 'indefinida'}",
+        f"Maior valor (amostra): {maior_valor or 'nÃ£o identificado'}",
+        f"Datas encontradas (amostra): {', '.join(datas_unicas) if datas_unicas else 'nÃ£o encontradas'}",
         "Indicadores:",
-        f" - Visita técnica: {'sim' if flags['exige_visita_tecnica'] else 'não'}",
-        f" - Atestado de capacidade: {'sim' if flags['exige_atestado_capacidade'] else 'não'}",
-        f" - Exclusivo ME/EPP: {'sim' if flags['exclusivo_me_epp'] else 'não'}",
-        f" - Critério: {'Menor Preço' if flags['criterio_menor_preco'] else ('Técnica e Preço' if flags['criterio_tecnica_preco'] else 'indefinido')}",
-        f"Objeto (aprox.): {objeto or 'não identificado'}",
+        f" - Visita tÃ©cnica: {'sim' if flags['exige_visita_tecnica'] else 'nÃ£o'}",
+        f" - Atestado de capacidade: {'sim' if flags['exige_atestado_capacidade'] else 'nÃ£o'}",
+        f" - Exclusivo ME/EPP: {'sim' if flags['exclusivo_me_epp'] else 'nÃ£o'}",
+        f" - CritÃ©rio: {'Menor PreÃ§o' if flags['criterio_menor_preco'] else ('TÃ©cnica e PreÃ§o' if flags['criterio_tecnica_preco'] else 'indefinido')}",
+        f"Objeto (aprox.): {objeto or 'nÃ£o identificado'}",
     ]
 
     dados = {
@@ -312,8 +372,46 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
     }
 
     return "\n".join(resumo_partes), dados
+
+
+def _ocr_pdf2(data: bytes, lang_default: str = "por") -> Optional[str]:
+    """OCR de PDF com limites e early-stop.
+
+    VariÃ¡veis de ambiente:
+    - OCR_MAX_PAGES (default 10)
+    - OCR_DPI (default 200)
+    - OCR_MIN_CHARS (default 1500)
+    """
+    if convert_from_bytes is None or pytesseract is None:
+        return None
+    try:
+        tcmd = os.getenv("TESSERACT_CMD")
+        if tcmd:
+            pytesseract.pytesseract.tesseract_cmd = tcmd
+        lang = os.getenv("TESSERACT_LANG", lang_default)
+        max_pages = int(os.getenv("OCR_MAX_PAGES", "10"))
+        dpi = int(os.getenv("OCR_DPI", "200"))
+        min_chars = int(os.getenv("OCR_MIN_CHARS", "1500"))
+
+        images = convert_from_bytes(data, dpi=dpi, first_page=1, last_page=max_pages)
+        texts: list[str] = []
+        total = 0
+        for img in images:
+            try:
+                txt = pytesseract.image_to_string(img, lang=lang)
+                if txt:
+                    texts.append(txt)
+                    total += len(txt)
+                    if total >= min_chars:
+                        break
+            except Exception:
+                continue
+        combined = "\n".join(texts).strip()
+        return combined or None
+    except Exception:
+        return None
 def _ocr_pdf(data: bytes, lang_default: str = "por") -> Optional[str]:
-    """Realiza OCR em um PDF (convertendo páginas para imagens)."""
+    """Realiza OCR em um PDF (convertendo pÃ¡ginas para imagens)."""
     if convert_from_bytes is None or pytesseract is None:
         return None
     try:
@@ -353,7 +451,7 @@ def _ocr_image(data: bytes, lang_default: str = "por") -> Optional[str]:
 
 
 def get_ocr_health() -> Dict[str, Any]:
-    """Retorna diagnóstico do OCR/PDF/HTML: módulos Python e binários externos."""
+    """Retorna diagnÃ³stico do OCR/PDF/HTML: mÃ³dulos Python e binÃ¡rios externos."""
     modules = {
         "requests": requests is not None,
         "beautifulsoup4": BeautifulSoup is not None,
@@ -409,9 +507,104 @@ def get_ocr_health() -> Dict[str, Any]:
             "pdftoppm": poppler_path,
             "version": poppler_version,
         },
-        "notes": "OCR é usado somente como fallback quando extração nativa falha ou é insuficiente.",
+        "notes": "OCR Ã© usado somente como fallback quando extraÃ§Ã£o nativa falha ou Ã© insuficiente.",
     }
 
+
+def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
+    """Extrai texto de um link de edital com cache e fallback robusto.
+
+    Retorna (texto, meta) onde meta inclui: method, ctype, pdf_resolvido, from_cache.
+    """
+    # Cache por URL
+    cached = _cache_get(link_edital)
+    if cached and isinstance(cached.get("text"), str):
+        return cached["text"], {
+            "method": cached.get("method", "cache"),
+            "ctype": cached.get("ctype", ""),
+            "pdf_resolvido": cached.get("pdf_resolvido"),
+            "from_cache": True,
+        }
+
+    method = ""
+    pdf_resolvido = None
+    ctype = ""
+    texto_edital: Optional[str] = None
+
+    # Download
+    data, ctype = _fetch_url(link_edital)
+    if data:
+        is_pdf = ("pdf" in (ctype or "").lower()) or link_edital.lower().endswith(".pdf")
+        if is_pdf:
+            texto_edital = _extract_text_from_pdf(data)
+            if not texto_edital or len(texto_edital) < 200:
+                ocr_txt = _ocr_pdf2(data)
+                if ocr_txt:
+                    texto_edital = ocr_txt
+                    method = "OCR"
+                else:
+                    method = "PDF-sem-texto"
+            else:
+                method = "Extracao de texto"
+        else:
+            # Imagem direto
+            if (ctype or "").lower().startswith("image/") or re.search(r"\.(png|jpe?g|tiff?)$", link_edital, re.I):
+                ocr_txt = _ocr_image(data)
+                if ocr_txt:
+                    texto_edital = ocr_txt
+                    method = "OCR"
+            # HTML + tentativa de links PDF
+            if not texto_edital:
+                html_text = _extract_text_from_html(data)
+                if html_text:
+                    texto_edital = html_text
+                    method = method or "HTML"
+                try:
+                    pdf_links = _find_pdf_links_from_html(data, link_edital)
+                    for pdf_url in pdf_links:
+                        pdata, pctype = _fetch_url(pdf_url)
+                        if not pdata:
+                            continue
+                        if (pctype and "pdf" in pctype.lower()) or pdf_url.lower().endswith(".pdf"):
+                            pdf_text = _extract_text_from_pdf(pdata)
+                            if not pdf_text or len(pdf_text) < 200:
+                                ocr_txt2 = _ocr_pdf2(pdata)
+                                if ocr_txt2:
+                                    pdf_text = ocr_txt2
+                                    method = "OCR"
+                            if pdf_text and len(pdf_text) >= 50:
+                                texto_edital = pdf_text
+                                pdf_resolvido = pdf_url
+                                method = method or "PDF-link"
+                                break
+                except Exception:
+                    pass
+
+    if not texto_edital:
+        texto_edital = (
+            "Nao foi possivel extrair texto do edital automaticamente. "
+            "O PDF pode estar protegido ou ser um documento escaneado (imagem). "
+            "Para OCR, instale Tesseract e Poppler (pdftoppm) e configure TESSERACT_CMD."
+        )
+        method = method or "Falha"
+
+    # grava cache
+    _cache_put(
+        link_edital,
+        {
+            "text": texto_edital,
+            "method": method or "Extracao de texto",
+            "ctype": ctype or "",
+            "pdf_resolvido": pdf_resolvido,
+        },
+    )
+
+    return texto_edital, {
+        "method": method or "Extracao de texto",
+        "ctype": ctype or "",
+        "pdf_resolvido": pdf_resolvido,
+        "from_cache": False,
+    }
 
 def run_analysis(analise_id: int):
     """
@@ -447,51 +640,12 @@ def run_analysis(analise_id: int):
         if not link_edital:
             raise ValueError("Link do edital nao encontrado para a analise.")
 
-        # 4) Baixa o conteudo do link (PDF/HTML)
-        print(f"[Analise ID: {analise_id}] - Baixando conteudo do edital...")
-        data, ctype = _fetch_url(link_edital)
-        texto_edital: Optional[str] = None
-        ocr_usado = False
-        pdf_resolvido: Optional[str] = None
-        if data:
-            is_pdf = ("pdf" in ctype.lower()) or link_edital.lower().endswith(".pdf")
-            if is_pdf:
-                texto_edital = _extract_text_from_pdf(data)
-                # Se falhou ou texto muito curto, tenta OCR
-                if not texto_edital or len(texto_edital) < 200:
-                    ocr_txt = _ocr_pdf(data)
-                    if ocr_txt:
-                        texto_edital = ocr_txt
-                        ocr_usado = True
-            else:
-                # Se for imagem, tenta OCR direto
-                if ctype.lower().startswith("image/") or re.search(r"\.(png|jpe?g|tiff?)$", link_edital, re.I):
-                    ocr_txt = _ocr_image(data)
-                    if ocr_txt:
-                        texto_edital = ocr_txt
-                        ocr_usado = True
-                if not texto_edital:
-                    # Tenta extrair do HTML e procurar links de PDF
-                    texto_edital = _extract_text_from_html(data)
-                    try:
-                        pdf_links = _find_pdf_links_from_html(data, link_edital)
-                        for pdf_url in pdf_links:
-                            pdata, pctype = _fetch_url(pdf_url)
-                            if not pdata:
-                                continue
-                            if (pctype and "pdf" in pctype.lower()) or pdf_url.lower().endswith(".pdf"):
-                                pdf_text = _extract_text_from_pdf(pdata)
-                                if not pdf_text or len(pdf_text) < 200:
-                                    ocr_txt2 = _ocr_pdf(pdata)
-                                    if ocr_txt2:
-                                        pdf_text = ocr_txt2
-                                        ocr_usado = True
-                                if pdf_text and len(pdf_text) >= 50:
-                                    texto_edital = pdf_text
-                                    pdf_resolvido = pdf_url
-                                    break
-                    except Exception:
-                        pass
+        # 4) Extrai o conteÃºdo (com cache e heurÃ­sticas robustas)
+        print(f"[Analise ID: {analise_id}] - Extraindo conteudo do edital (cache/heuristicas)...")
+        extracted_text, meta = extract_text_from_link(link_edital)
+        texto_edital: Optional[str] = extracted_text
+        ocr_usado = (meta.get("method") == "OCR") if isinstance(meta, dict) else False
+        pdf_resolvido: Optional[str] = meta.get("pdf_resolvido") if isinstance(meta, dict) else None
 
         # 5) Se nao conseguiu extrair texto, gera orientacao
         if not texto_edital:
@@ -508,7 +662,7 @@ def run_analysis(analise_id: int):
         print(f"[Analise ID: {analise_id}] - Gerando panorama de dados...")
         panorama = analisar_licitacoes_com_pandas()
 
-        metodo = "OCR" if ocr_usado else "Extracao de texto"
+        metodo = meta.get("method", "Extracao de texto") if isinstance(meta, dict) else ("OCR" if ocr_usado else "Extracao de texto")
         resultado_final = (
             "Resultado da analise do edital:\n"
             f"- Link: {link_edital}\n"

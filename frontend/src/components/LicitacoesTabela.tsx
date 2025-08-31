@@ -420,12 +420,61 @@ export default function LicitacoesTabela() {
         )}
       </div>
 
-      {/* Tabela */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border border-gray-200">
-          <thead>
-            <tr className="bg-gray-100">
-              <th className="py-2 px-3 border-b w-12 text-center">
+      {/* Tabela (layout clássico com cabeçalho fixo) */}
+      <div className="rounded-lg border bg-white shadow-sm">
+        <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
+          {loading ? (
+            <table className="min-w-[1000px] w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-gray-50">
+                <tr>
+                  <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap"></th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Órgão</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data de Encerramento</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-nowrap">Valor Estimado</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Edital</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} className="odd:bg-gray-50">
+                    <td className="py-2 px-3 border-b text-center whitespace-nowrap">
+                      <div className="h-4 w-4 bg-gray-200 rounded animate-pulse mx-auto" />
+                    </td>
+                    <td className="py-2 px-4 border-b whitespace-nowrap">
+                      <div className="h-4 w-40 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="py-2 px-4 border-b">
+                      <div className="h-4 w-[480px] bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="py-2 px-4 border-b whitespace-nowrap">
+                      <div className="h-4 w-28 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="py-2 px-4 border-b text-right whitespace-nowrap">
+                      <div className="h-4 w-24 bg-gray-200 rounded animate-pulse ml-auto" />
+                    </td>
+                    <td className="py-2 px-4 border-b text-center whitespace-nowrap">
+                      <div className="h-6 w-20 bg-gray-200 rounded animate-pulse mx-auto" />
+                    </td>
+                    <td className="py-2 px-4 border-b text-center whitespace-nowrap">
+                      <div className="h-6 w-28 bg-gray-200 rounded animate-pulse mx-auto" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : licitacoesExibidas.length === 0 ? (
+            <div className="p-10 text-center text-gray-600">
+              <div className="text-lg font-medium mb-2">Nenhum resultado encontrado</div>
+              <div className="text-sm">Ajuste os filtros ou clique em “Buscar licitações”.</div>
+            </div>
+          ) : null}
+          {!loading && licitacoesExibidas.length > 0 && (
+        <table className="min-w-[1000px] w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-gray-50">
+            <tr>
+              <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap">
                 <input
                   type="checkbox"
                   ref={selectAllCheckboxRef}
@@ -435,10 +484,10 @@ export default function LicitacoesTabela() {
                 />
               </th>
               <th className="py-2 px-4 border-b">{"Órgão"}</th>
-              <th className="py-2 px-4 border-b">Objeto</th>
-              <th className="py-2 px-4 border-b">Data de Encerramento</th>
-              <th className="py-2 px-4 border-b">Valor Estimado</th>
-              <th className="py-2 px-4 border-b">Edital</th>
+              <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto</th>
+              <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data de Encerramento</th>
+              <th className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-nowrap">Valor Estimado</th>
+              <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Edital</th>
               <th className="py-2 px-4 border-b">{"Status da Análise"}</th>
             </tr>
           </thead>
@@ -446,9 +495,9 @@ export default function LicitacoesTabela() {
             {licitacoesExibidas.map((licitacao) => (
               <tr
                 key={licitacao.id}
-                className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "hover:bg-gray-50"}`}
+                className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"}`}
               >
-                <td className="py-2 px-3 border-b text-center">
+                <td className="py-2 px-3 border-b text-center whitespace-nowrap">
                   <input
                     type="checkbox"
                     checked={selectedIds.has(licitacao.id)}
@@ -456,14 +505,18 @@ export default function LicitacoesTabela() {
                     className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
                 </td>
-                <td className="py-2 px-4 border-b">{licitacao.orgao_entidade_nome}</td>
-                <td className="py-2 px-4 border-b">{licitacao.objeto_compra}</td>
+                <td className="py-2 px-4 border-b whitespace-nowrap">{licitacao.orgao_entidade_nome}</td>
                 <td className="py-2 px-4 border-b">
+                  <div className="max-w-[520px] truncate" title={licitacao.objeto_compra || undefined}>
+                    {licitacao.objeto_compra}
+                  </div>
+                </td>
+                <td className="py-2 px-4 border-b whitespace-nowrap">
                   {licitacao.data_encerramento_proposta
                     ? new Date(licitacao.data_encerramento_proposta).toLocaleDateString("pt-BR")
                     : "N/A"}
                 </td>
-                <td className="py-2 px-4 border-b text-right">
+                <td className="py-2 px-4 border-b text-right whitespace-nowrap">
                   {licitacao.valor_total_estimado
                     ? parseFloat(licitacao.valor_total_estimado).toLocaleString("pt-BR", {
                         style: "currency",
@@ -471,7 +524,7 @@ export default function LicitacoesTabela() {
                       })
                     : "N/A"}
                 </td>
-                <td className="py-2 px-4 border-b text-center">
+                <td className="py-2 px-4 border-b text-center whitespace-nowrap">
                   {licitacao.link_sistema_origem ? (
                     <a
                       href={licitacao.link_sistema_origem}
@@ -504,6 +557,8 @@ export default function LicitacoesTabela() {
             ))}
           </tbody>
         </table>
+          )}
+        </div>
       </div>
     </div>
   );

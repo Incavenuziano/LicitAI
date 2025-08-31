@@ -10,7 +10,7 @@ services:
     environment:
       - POSTGRES_USER=licitai_user
       - POSTGRES_PASSWORD=licitai_password
-      - POSTGRES_DB=licitai_db
+      - POSTGRES_DB=licitai
     ports:
       - '5433:5432'
     volumes:

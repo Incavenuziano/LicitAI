@@ -182,37 +182,10 @@ def rag_indexar(licitacao_id: int, db: Session = Depends(get_db)):
     if not lic or not lic.link_sistema_origem:
         raise HTTPException(status_code=404, detail="Licitação não encontrada ou sem link de edital")
 
-    from src.analysis_service import _fetch_url, _extract_text_from_pdf, _extract_text_from_html, _ocr_pdf, _ocr_image, _find_pdf_links_from_html  # type: ignore
+    from src.analysis_service import extract_text_from_link  # type: ignore
 
     def extractor(licitacao: models.Licitacao) -> str:
-        data, ctype = _fetch_url(licitacao.link_sistema_origem)
-        if not data:
-            return ""
-        texto = None
-        is_pdf = ("pdf" in (ctype or "").lower()) or licitacao.link_sistema_origem.lower().endswith(".pdf")
-        if is_pdf:
-            texto = _extract_text_from_pdf(data)
-            if not texto or len(texto) < 200:
-                texto = _ocr_pdf(data) or texto
-        else:
-            if (ctype or "").lower().startswith("image/"):
-                texto = _ocr_image(data) or ""
-            if not texto:
-                texto = _extract_text_from_html(data) or ""
-                try:
-                    for pdf_url in _find_pdf_links_from_html(data, licitacao.link_sistema_origem):
-                        pdata, pctype = _fetch_url(pdf_url)
-                        if not pdata:
-                            continue
-                        if (pctype and "pdf" in pctype.lower()) or pdf_url.lower().endswith(".pdf"):
-                            ptxt = _extract_text_from_pdf(pdata)
-                            if not ptxt or len(ptxt) < 200:
-                                ptxt = _ocr_pdf(pdata) or ptxt
-                            if ptxt and len(ptxt) >= 50:
-                                texto = ptxt
-                                break
-                except Exception:
-                    pass
+        texto, _meta = extract_text_from_link(licitacao.link_sistema_origem)
         return texto or ""
 
     count = index_licitacao(db, lic, extractor)

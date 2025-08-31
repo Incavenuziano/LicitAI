@@ -1,4 +1,4 @@
-# Backend (FastAPI)
+﻿# Backend (FastAPI)
 
 - Python API with SQLAlchemy and PostgreSQL.
 - Defaults match `docker-compose.yml` (Postgres on `localhost:5433`).
@@ -40,12 +40,29 @@ uvicorn main:app --reload --port 8000
 
 ## Endpoints (quick test)
 
-- GET `/` – health message
-- POST `/users/` – create user `{ email, password, nickname? }`
-- POST `/login` – OAuth2 form `{ username: email, password }`
-- GET `/licitacoes` – list with analyses
-- POST `/analises/` – `{ licitacao_ids: number[] }` creates background analyses
+- GET `/` â€“ health message
+- POST `/users/` â€“ create user `{ email, password, nickname? }`
+- POST `/login` â€“ OAuth2 form `{ username: email, password }`
+- GET `/licitacoes` â€“ list with analyses
+- POST `/analises/` â€“ `{ licitacao_ids: number[] }` creates background analyses
 
 Notes
 - CORS allows `http://localhost:3000` for the frontend.
 - DB connection is hardcoded in `src/database.py` to match compose defaults.
+
+## OCR e ExtraÃ§Ã£o (robustez e cache)
+
+O serviÃ§o de anÃ¡lise usa extraÃ§Ã£o nativa de PDF/HTML e faz fallback para OCR (Tesseract) quando necessÃ¡rio. Resultados sÃ£o cacheados por URL para evitar reprocessamento pesado.
+
+VariÃ¡veis de ambiente opcionais:
+
+- TESSERACT_CMD: caminho do binÃ¡rio `tesseract` (Windows ex.: `C:\Program Files\Tesseract-OCR\tesseract.exe`)
+- TESSERACT_LANG: idioma do OCR (default `por`)
+- OCR_MAX_PAGES: pÃ¡ginas mÃ¡ximas no OCR de PDF (default `10`)
+- OCR_DPI: resoluÃ§Ã£o para conversÃ£o PDFâ†’imagem (default `200`)
+- OCR_MIN_CHARS: earlyâ€‘stop do OCR quando acumular este mÃ­nimo de caracteres (default `1500`)
+- OCR_CACHE_DIR: diretÃ³rio do cache (default `backend/tmp/ocr_cache`)
+- OCR_CACHE_TTL: TTL do cache em segundos (default `259200`, 3 dias)
+
+Endpoints Ãºteis:
+- GET `/health/ocr` â€” diagnÃ³stico de bibliotecas e binÃ¡rios (pytesseract, poppler/pdftoppm, etc.).
