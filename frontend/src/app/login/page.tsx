@@ -1,57 +1,56 @@
-﻿'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import Image from 'next/image';
+import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
+import Image from "next/image";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    setError('');
+    setError("");
     setSubmitting(true);
     try {
-      const result = await signIn('credentials', {
+      const result = await signIn("credentials", {
         redirect: false,
         email,
         password,
       });
       if (result?.error) {
-        setError('Email ou senha invÃ¡lidos.');
+        setError("Email ou senha inválidos.");
       } else if (result?.ok) {
-        router.push('/');
+        router.push("/");
         router.refresh();
       }
     } catch (e) {
-      setError('Falha ao conectar. Tente novamente.');
+      setError("Falha ao conectar. Tente novamente.");
     } finally {
       setSubmitting(false);
     }
   };
+
   // Lê erros do NextAuth (?error=...) e mostra na tela de login
   useEffect(() => {
-    const code = searchParams.get('error');
+    const code = searchParams.get("error");
     if (!code) return;
     const map: Record<string, string> = {
-      CredentialsSignin: 'Email ou senha inválidos.',
-      AccessDenied: 'Acesso negado.',
-      configuracaon: 'Erro de configuracao do login.',
-      default: 'Falha ao autenticar. Tente novamente.',
+      CredentialsSignin: "Email ou senha inválidos.",
+      AccessDenied: "Acesso negado.",
+      Configuration: "Erro de configuração do login.",
+      default: "Falha ao autenticar. Tente novamente.",
     };
     setError(map[code] || map.default);
   }, [searchParams]);
-
 
   return (
     <div className="min-h-screen grid grid-cols-1 md:grid-cols-2 bg-licitai-bg-light">
@@ -68,11 +67,11 @@ export default function LoginPage() {
             <Image src="/logo_licitai.png" alt="LicitAI" width={112} height={112} className="w-full h-full object-contain" />
           </div>
           <h1 className="text-4xl font-bold text-licitai-primary mb-3">LicitAI</h1>
-          <p className="text-licitaçõesse sua conta para gerenciar licitações com inteligência.</p>
+          <p className="text-licitai-secondary">Acesse sua conta para gerenciar licitações com inteligência.</p>
         </div>
       </div>
 
-      {/* FormulÃ¡rio */}
+      {/* Formulário */}
       <div className="flex items-center justify-center p-6 md:p-12">
         <div className="w-full max-w-md">
           <div className="mb-8 flex items-center gap-3 md:hidden">
@@ -109,7 +108,7 @@ export default function LoginPage() {
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700">Senha</label>
                 <div className={`mt-1 flex items-center rounded-md border ${error ? 'border-red-300' : 'border-gray-300'} focus-within:ring-2 focus-within:ring-licitai-primary/40 focus-within:border-licitai-primary/60`}>
                   <input
-                    type={showPassword ? 'text' : 'password'}
+                    type={showPassword ? "text" : "password"}
                     id="password"
                     name="password"
                     autoComplete="current-password"
@@ -122,7 +121,7 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     className="px-3 py-2 text-gray-500 hover:text-gray-700"
-                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   >
                     {showPassword ? (
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M3.53 2.47a.75.75 0 10-1.06 1.06l18 18a.75.75 0 101.06-1.06l-2.427-2.427A11.543 11.543 0 0021.75 12C20.94 9.27 17.182 4.5 12 4.5a9.42 9.42 0 00-3.593.695L3.53 2.47zM12 6c4.098 0 7.28 3.38 8.25 6-.248.65-.638 1.42-1.152 2.195L16.28 11.38A4.5 4.5 0 0012.62 7.72L10.9 6.001C11.258 5.967 11.627 6 12 6z"/><path d="M8.53 9.03a4.5 4.5 0 005.94 5.94l-1.153-1.153a3 3 0 01-3.634-3.634L8.53 9.03z"/><path d="M3.75 12c.779-2.436 3.634-5.25 6.902-5.45l-1.39-1.39C6.873 6.142 4.633 8.212 3.75 12z"/></svg>
@@ -138,7 +137,7 @@ export default function LoginPage() {
                   <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-licitai-primary focus:ring-licitai-primary" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                   Lembrar de mim
                 </label>
-                <a href="#" className="text-sm text-licitaçõesqueci minha senha</a>
+                <a href="#" className="text-sm text-licitai-secondary hover:underline">Esqueci minha senha</a>
               </div>
 
               <button
@@ -149,13 +148,13 @@ export default function LoginPage() {
                 {submitting ? (
                   <span className="inline-flex items-center gap-2"><span className="h-4 w-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> Entrando...</span>
                 ) : (
-                  'Entrar'
+                  "Entrar"
                 )}
               </button>
             </form>
 
             <div className="mt-6 text-center text-sm text-gray-600">
-              NÃ£o tem uma conta? <a href="#" className="text-licitai-secondary hover:underline">Cadastre-se</a>
+              Não tem uma conta? <a href="#" className="text-licitai-secondary hover:underline">Cadastre-se</a>
             </div>
           </div>
         </div>
@@ -163,9 +162,4 @@ export default function LoginPage() {
     </div>
   );
 }
-
-
-
-
-
 

@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
-import LicitacoesTabela from '@/components/LicitacoesTabela';
+import dynamic from 'next/dynamic';
+const Dashboard = dynamic(() => import('@/components/Dashboard'), { ssr: false });
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation'; // Import useRouter
@@ -16,7 +17,7 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-8">
+    <main className="flex min-h-screen flex-col">
       <div className="w-full max-w-5xl items-center justify-between font-mono text-sm flex mb-8">
         <h1 className="text-2xl font-bold">LicitAI</h1>
         {status === 'authenticated' && session.user && (
@@ -32,9 +33,8 @@ export default function Home() {
       {status === 'loading' && <p>{'Carregando sess\u00E3o...'}</p>}
 
       {status === 'authenticated' && (
-        <div className="w-full">
-          <h2 className="text-xl mb-4 font-semibold">{'Licita\u00E7\u00F5es Abertas'}</h2>
-          <LicitacoesTabela />
+        <div className="w-full max-w-5xl">
+          <Dashboard />
         </div>
       )}
     </main>

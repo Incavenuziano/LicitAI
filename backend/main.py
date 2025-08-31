@@ -2,8 +2,9 @@
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
-from datetime import date
+from datetime import date, datetime, timedelta
 import json
 
 from pydantic import BaseModel
@@ -203,6 +204,92 @@ def rag_perguntar(licitacao_id: int, req: RagQuestion, db: Session = Depends(get
         "results": [{"score": float(s), "chunk": c} for s, c in top],
     }
 
+
+# --- Dashboard: KPIs e distribuições ---
+def _classificar_tipo(objeto: Optional[str]) -> str:
+    if not objeto:
+        return "Outros"
+    import unicodedata
+    texto = unicodedata.normalize("NFD", objeto).encode("ascii", "ignore").decode("ascii").lower()
+    keywords_servico = [
+        "servico", "consultoria", "manutencao", "execucao de obra", "elaboracao de projeto",
+    ]
+    keywords_aquisicao = [
+        "aquisicao", "compra", "fornecimento", "material", "equipamentos",
+    ]
+    if any(kw in texto for kw in keywords_servico):
+        return "Serviço"
+    if any(kw in texto for kw in keywords_aquisicao):
+        return "Aquisição"
+    return "Outros"
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary(db: Session = Depends(get_db)):
+    # KPI: novas licitações hoje
+    today = date.today()
+    start = datetime(today.year, today.month, today.day)
+    end = start + timedelta(days=1)
+    novas_hoje = (
+        db.query(func.count(models.Licitacao.id))
+        .filter(
+            models.Licitacao.data_publicacao_pncp != None,
+            models.Licitacao.data_publicacao_pncp >= start,
+            models.Licitacao.data_publicacao_pncp < end,
+        )
+        .scalar()
+        or 0
+    )
+
+    # KPI: valor total estimado das licitações em aberto (encerramento no futuro)
+    now = datetime.utcnow()
+    total_aberto = (
+        db.query(func.sum(models.Licitacao.valor_total_estimado))
+        .filter(
+            models.Licitacao.data_encerramento_proposta != None,
+            models.Licitacao.data_encerramento_proposta >= now,
+        )
+        .scalar()
+    )
+    try:
+        valor_total_aberto = float(total_aberto or 0)
+    except Exception:
+        valor_total_aberto = 0.0
+
+    # KPI: análises concluídas (status inicia com 'Conclu')
+    analises_concluidas = (
+        db.query(func.count(models.Analise.id))
+        .filter(models.Analise.status.ilike("conclu%"))
+        .scalar()
+        or 0
+    )
+
+    # Distribuição por UF
+    rows_uf = (
+        db.query(models.Licitacao.uf, func.count(models.Licitacao.id))
+        .filter(models.Licitacao.uf != None)
+        .group_by(models.Licitacao.uf)
+        .all()
+    )
+    by_uf = [
+        {"uf": (uf or "N/A"), "count": int(cnt or 0)} for uf, cnt in rows_uf
+    ]
+
+    # Distribuição por tipo (classificação heurística do objeto)
+    tipos = {"Serviço": 0, "Aquisição": 0, "Outros": 0}
+    for (obj,) in db.query(models.Licitacao.objeto_compra).filter(models.Licitacao.objeto_compra != None).all():
+        tipos[_classificar_tipo(obj)] += 1
+    by_tipo = [{"tipo": k, "count": v} for k, v in tipos.items()]
+
+    return {
+        "kpis": {
+            "novas_hoje": int(novas_hoje),
+            "valor_total_aberto": valor_total_aberto,
+            "analises_concluidas": int(analises_concluidas),
+        },
+        "by_uf": by_uf,
+        "by_tipo": by_tipo,
+    }
 
 # --- Agente: Preço vencedor de itens similares ---
 class PrecoRequest(BaseModel):

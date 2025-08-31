@@ -1,6 +1,7 @@
 ﻿import type { Metadata } from "next";
 import "./globals.css";
 import Providers from "./providers";
+import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "LicitAI",
@@ -17,8 +18,10 @@ export default function RootLayout({
       <head>
         <meta charSet="utf-8" />
       </head>
-      <body>
-        <Providers>{children}</Providers>
+      <body className="bg-gray-50">
+        <Providers>
+          <AppShell>{children}</AppShell>
+        </Providers>
       </body>
     </html>
   );

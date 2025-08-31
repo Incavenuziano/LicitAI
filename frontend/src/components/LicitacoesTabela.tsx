@@ -1,14 +1,15 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getLicitacoes, requestAnalises, buscarLicitacoes, getPrecosVencedores, PrecoVencedorResponse, ragIndexar, ragPerguntar } from "@/services/api";
+import Link from "next/link";
+import { getLicitacoes, requestAnalises, buscarLicitacoes, ragIndexar, ragPerguntar } from "@/services/api";
+import { Licitacao, Analise } from "@/types";
 
 const UFS_BR = [
-  "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA",
-  "MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN",
-  "RS","RO","RR","SC","SP","SE","TO",
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
+  "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
+  "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ] as const;
-import { Licitacao, Analise } from "@/types";
 
 const StatusAnalise: React.FC<{
   analise: Analise | undefined;
@@ -92,7 +93,6 @@ export default function LicitacoesTabela() {
   const [ragIndexing, setRagIndexing] = useState(false);
   const [ragAnswers, setRagAnswers] = useState<{ q: string; a: string }[]>([]);
   const [isFetchingNew, setIsFetchingNew] = useState(false);
-  const [precoModal, setPrecoModal] = useState<{ open: boolean; loading: boolean; fonte: 'comprasgov'|'pncp'|'ambas'; data?: PrecoVencedorResponse; licitacao?: Licitacao; error?: string }>({ open: false, loading: false, fonte: 'comprasgov' });
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
   const fetchData = async () => {
@@ -164,7 +164,7 @@ export default function LicitacoesTabela() {
         data_inicio: dataInicio || undefined,
         data_fim: dataFim || undefined,
       });
-      alert("Busca de novas licitações solicitada. A lista serÃ¡ atualizada.");
+      alert("Busca de novas licitações solicitada. A lista será atualizada.");
       setTimeout(fetchData, 1000);
     } catch (e) {
       console.error(e);
@@ -208,33 +208,25 @@ export default function LicitacoesTabela() {
         numero: licitacao.numero_controle_pncp,
         id: licitacao.id,
       });
-
-  const openPrecoModal = async (licitacao: Licitacao, fonte: "comprasgov"|"pncp"|"ambas" = "comprasgov") => {
-    setPrecoModal({ open: true, loading: true, fonte, licitacao });
-    try {
-      const data = await getPrecosVencedores(licitacao.id, fonte, 20);
-      setPrecoModal((s) => ({ ...s, data, loading: false, error: undefined }));
-    } catch (e: any) {
-      setPrecoModal((s) => ({ ...s, loading: false, error: e?.message || "Falha ao buscar preços" }));
+    } else {
+      alert("Não foi possível carregar o resultado da análise.");
     }
   };
+
   const handleRagAsk = async () => {
     if (!selectedAnalise?.id || !ragQuestion.trim()) return;
     setRagLoading(true);
     try {
       const r = await ragPerguntar(selectedAnalise.id, ragQuestion, 4);
-      const answer = r.results.map((x) => x.chunk).join("\n\n---\n\n");
+      const answer = (r.results && r.results.length > 0)
+        ? r.results.map((x) => x.chunk).join("\n\n---\n\n")
+        : 'Nenhum trecho encontrado. Dica: clique em "Indexar" antes e tente novamente.';
       setRagAnswers((prev) => [{ q: ragQuestion, a: answer }, ...prev]);
       setRagQuestion("");
     } catch (e: any) {
       alert(e?.message || "Falha ao consultar o edital");
     } finally {
       setRagLoading(false);
-    }
-  };
-
-    } else {
-      alert("Não foi possível carregar o resultado da análise.");
     }
   };
 
@@ -261,7 +253,7 @@ export default function LicitacoesTabela() {
     };
     const csvRows = [headers.join(",")];
     dataToExport.forEach((item) => {
-      const row = headers.map((header) => sanitizeCell(item[header as keyof Licitacao]));
+      const row = headers.map((header) => sanitizeCell((item as any)[header]));
       csvRows.push(row.join(","));
     });
     const csvString = csvRows.join("\n");
@@ -390,14 +382,14 @@ export default function LicitacoesTabela() {
         </div>
       </div>
 
-      {/* Resultado da AnÃ¡lise (entre filtros e aÃ§Ãµes) */}
+      {/* Resultado da Análise (entre filtros e ações) */}
       {selectedAnalise && (
         <div className="mb-3 p-4 bg-blue-50 border border-blue-200 rounded">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-bold">
-              Resultado da AnÃ¡lise
-              {selectedAnalise.orgao ? ` â€” ${selectedAnalise.orgao}` : ""}
-              {selectedAnalise.numero ? ` â€” ${selectedAnalise.numero}` : ""}
+              Resultado da Análise
+              {selectedAnalise.orgao ? ` · ${selectedAnalise.orgao}` : ""}
+              {selectedAnalise.numero ? ` · ${selectedAnalise.numero}` : ""}
             </h3>
             <div className="flex items-center gap-2">
               <button
@@ -418,49 +410,49 @@ export default function LicitacoesTabela() {
           </div>
           <div className="whitespace-pre-wrap bg-white p-3 rounded border border-blue-100 font-mono text-sm max-h-96 overflow-auto">
             {selectedAnalise.resultado}
-          <div className="mt-3 rounded border border-blue-100 bg-white p-3">
-            <h4 className="font-semibold mb-2 text-sm">Perguntar ao Edital (RAG)</h4>
-            <div className="flex gap-2 mb-2">
-              <input
-                type="text"
-                value={ragQuestion}
-                onChange={(e) => setRagQuestion(e.target.value)}
-                placeholder="Ex.: Data limite para entrega? Garantia exigida?"
-                className="flex-1 px-3 py-2 border rounded"
-              />
-              <button
-                onClick={async () => {
-                  if (!selectedAnalise?.id) return;
-                  setRagIndexing(true);
-                  try { await ragIndexar(selectedAnalise.id); } catch {}
-                  finally { setRagIndexing(false); }
-                }}
-                className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                disabled={ragIndexing}
-              >
-                {ragIndexing ? "Indexando..." : "Indexar"}
-              </button>
-              <button
-                onClick={handleRagAsk}
-                disabled={ragLoading || !ragQuestion.trim()}
-                className="px-3 py-2 bg-indigo-600 text-white rounded disabled:bg-gray-400"
-              >
-                {ragLoading ? "Perguntando..." : "Perguntar"}
-              </button>
-            </div>
-            {ragAnswers.length > 0 && (
-              <div className="space-y-3 max-h-64 overflow-auto">
-                {ragAnswers.map((m, idx) => (
-                  <div key={idx} className="text-sm">
-                    <div className="text-gray-600">Q: {m.q}</div>
-                    <div className="whitespace-pre-wrap mt-1 border rounded p-2 bg-gray-50">
-                      {m.a}
-                    </div>
-                  </div>
-                ))}
+            <div className="mt-3 rounded border border-blue-100 bg-white p-3">
+              <h4 className="font-semibold mb-2 text-sm">Perguntar ao Edital (RAG)</h4>
+              <div className="flex gap-2 mb-2">
+                <input
+                  type="text"
+                  value={ragQuestion}
+                  onChange={(e) => setRagQuestion(e.target.value)}
+                  placeholder="Ex.: Data limite para entrega? Garantia exigida?"
+                  className="flex-1 px-3 py-2 border rounded"
+                />
+                <button
+                  onClick={async () => {
+                    if (!selectedAnalise?.id) return;
+                    setRagIndexing(true);
+                    try { await ragIndexar(selectedAnalise.id); } catch (e: any) { alert(e?.message || "Falha ao indexar"); }
+                    finally { setRagIndexing(false); }
+                  }}
+                  className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
+                  disabled={ragIndexing}
+                >
+                  {ragIndexing ? "Indexando..." : "Indexar"}
+                </button>
+                <button
+                  onClick={handleRagAsk}
+                  disabled={ragLoading || !ragQuestion.trim()}
+                  className="px-3 py-2 bg-indigo-600 text-white rounded disabled:bg-gray-400"
+                >
+                  {ragLoading ? "Perguntando..." : "Perguntar"}
+                </button>
               </div>
-            )}
-          </div>
+              {ragAnswers.length > 0 && (
+                <div className="space-y-3 max-h-64 overflow-auto">
+                  {ragAnswers.map((m, idx) => (
+                    <div key={idx} className="text-sm">
+                      <div className="text-gray-600">Q: {m.q}</div>
+                      <div className="whitespace-pre-wrap mt-1 border rounded p-2 bg-gray-50">
+                        {m.a}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -494,149 +486,109 @@ export default function LicitacoesTabela() {
         )}
       </div>
 
-      {/* Tabela (layout clÃ¡ssico com cabeÃ§alho fixo) */}
+      {/* Tabela */}
       <div className="rounded-lg border bg-white shadow-sm">
         <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
-          {loading ? (
+          {!loading && licitacoesExibidas.length > 0 && (
             <table className="min-w-[1000px] w-full text-sm">
               <thead className="sticky top-0 z-10 bg-gray-50">
                 <tr>
-                  <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap"></th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Órgão</th>
+                  <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      ref={selectAllCheckboxRef}
+                      checked={licitacoesExibidas.length > 0 && selectedIds.size === licitacoesExibidas.length}
+                      onChange={handleSelectAll}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                  </th>
+                  <th className="py-2 px-4 border-b">{"Órgão"}</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data de Encerramento</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-nowrap">Valor Estimado</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Edital</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Status</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Preços</th>
+                  <th className="py-2 px-4 border-b">{"Status da Análise"}</th>
                 </tr>
               </thead>
               <tbody>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <tr key={i} className="odd:bg-gray-50">
+                {licitacoesExibidas.map((licitacao) => (
+                  <tr
+                    key={licitacao.id}
+                    className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"}`}
+                  >
                     <td className="py-2 px-3 border-b text-center whitespace-nowrap">
-                      <div className="h-4 w-4 bg-gray-200 rounded animate-pulse mx-auto" />
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(licitacao.id)}
+                        onChange={() => handleSelect(licitacao.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
                     </td>
-                    <td className="py-2 px-4 border-b whitespace-nowrap">
-                      <div className="h-4 w-40 bg-gray-200 rounded animate-pulse" />
-                    </td>
+                    <td className="py-2 px-4 border-b whitespace-nowrap">{licitacao.orgao_entidade_nome}</td>
                     <td className="py-2 px-4 border-b">
-                      <div className="h-4 w-[480px] bg-gray-200 rounded animate-pulse" />
+                      <div className="max-w-[520px] truncate" title={licitacao.objeto_compra || undefined}>
+                        {licitacao.objeto_compra}
+                      </div>
                     </td>
                     <td className="py-2 px-4 border-b whitespace-nowrap">
-                      <div className="h-4 w-28 bg-gray-200 rounded animate-pulse" />
+                      {licitacao.data_encerramento_proposta
+                        ? new Date(licitacao.data_encerramento_proposta).toLocaleDateString("pt-BR")
+                        : "N/A"}
                     </td>
                     <td className="py-2 px-4 border-b text-right whitespace-nowrap">
-                      <div className="h-4 w-24 bg-gray-200 rounded animate-pulse ml-auto" />
+                      {licitacao.valor_total_estimado
+                        ? parseFloat(licitacao.valor_total_estimado).toLocaleString("pt-BR", {
+                            style: "currency",
+                            currency: "BRL",
+                          })
+                        : "N/A"}
                     </td>
                     <td className="py-2 px-4 border-b text-center whitespace-nowrap">
-                      <div className="h-6 w-20 bg-gray-200 rounded animate-pulse mx-auto" />
+                      {licitacao.link_sistema_origem ? (
+                        <a
+                          href={licitacao.link_sistema_origem}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm"
+                        >
+                          Acessar
+                        </a>
+                      ) : (
+                        "N/D"
+                      )}
                     </td>
                     <td className="py-2 px-4 border-b text-center whitespace-nowrap">
-                      <div className="h-6 w-28 bg-gray-200 rounded animate-pulse mx-auto" />
+                      <Link
+                        href={`/precos/${licitacao.id}`}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded text-sm"
+                      >
+                        Preços
+                      </Link>
+                    </td>
+                    <td
+                      className={`py-2 px-4 border-b text-center ${(() => {
+                        const st = licitacao.analises && licitacao.analises[0] ? licitacao.analises[0].status : undefined;
+                        const s = String(st).toLowerCase();
+                        if (s === "processando") return "bg-yellow-50";
+                        if (s === "erro") return "bg-red-50";
+                        if (s.startsWith("conclu")) return "bg-green-50";
+                        return "";
+                      })()}`}
+                    >
+                      <StatusAnalise
+                        analise={licitacao.analises && licitacao.analises[0]}
+                        onVerResultado={() => handleShowResultado(licitacao)}
+                      />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          ) : licitacoesExibidas.length === 0 ? (
-            <div className="p-10 text-center text-gray-600">
-              <div className="text-lg font-medium mb-2">Nenhum resultado encontrado</div>
-              <div className="text-sm">Ajuste os filtros ou clique em “Buscar licitações”.</div>
-            </div>
-          ) : null}
-          {!loading && licitacoesExibidas.length > 0 && (
-        <table className="min-w-[1000px] w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-gray-50">
-            <tr>
-              <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  ref={selectAllCheckboxRef}
-                  checked={licitacoesExibidas.length > 0 && selectedIds.size === licitacoesExibidas.length}
-                  onChange={handleSelectAll}
-                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                />
-              </th>
-              <th className="py-2 px-4 border-b">{"Órgão"}</th>
-              <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto</th>
-              <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data de Encerramento</th>
-              <th className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-nowrap">Valor Estimado</th>
-              <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Edital</th>
-              <th className="py-2 px-4 border-b">{"Status da Análise"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {licitacoesExibidas.map((licitacao) => (
-              <tr
-                key={licitacao.id}
-                className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"}`}
-              >
-                <td className="py-2 px-3 border-b text-center whitespace-nowrap">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(licitacao.id)}
-                    onChange={() => handleSelect(licitacao.id)}
-                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                </td>
-                <td className="py-2 px-4 border-b whitespace-nowrap">{licitacao.orgao_entidade_nome}</td>
-                <td className="py-2 px-4 border-b">
-                  <div className="max-w-[520px] truncate" title={licitacao.objeto_compra || undefined}>
-                    {licitacao.objeto_compra}
-                  </div>
-                </td>
-                <td className="py-2 px-4 border-b whitespace-nowrap">
-                  {licitacao.data_encerramento_proposta
-                    ? new Date(licitacao.data_encerramento_proposta).toLocaleDateString("pt-BR")
-                    : "N/A"}
-                </td>
-                <td className="py-2 px-4 border-b text-right whitespace-nowrap">
-                  {licitacao.valor_total_estimado
-                    ? parseFloat(licitacao.valor_total_estimado).toLocaleString("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      })
-                    : "N/A"}
-                </td>
-                <td className="py-2 px-4 border-b text-center whitespace-nowrap">
-                  {licitacao.link_sistema_origem ? (
-                    <a
-                      href={licitacao.link_sistema_origem}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm"
-                    >
-                      Acessar
-                    </a>
-                  ) : (
-                    "N/D"
-                  )}
-                </td>
-                <td
-                  className={`py-2 px-4 border-b text-center ${(() => {
-                    const st = licitacao.analises && licitacao.analises[0] ? licitacao.analises[0].status : undefined;
-                    const s = String(st).toLowerCase();
-                    if (s === "processando") return "bg-yellow-50";
-                    if (s === "erro") return "bg-red-50";
-                    if (s.startsWith("conclu")) return "bg-green-50";
-                    return "";
-                  })()}`}
-                >
-                  <StatusAnalise
-                    analise={licitacao.analises && licitacao.analises[0]}
-                    onVerResultado={() => handleShowResultado(licitacao)}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
           )}
         </div>
       </div>
     </div>
   );
 }
-
-
 

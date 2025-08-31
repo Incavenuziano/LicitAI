@@ -1,7 +1,7 @@
 ﻿import NextAuth, { AuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 
-// O tipo de usuÃ¡rio que nossa API retorna apÃ³s o login bem-sucedido
+// O tipo de usuário que nossa API retorna após o login bem-sucedido
 interface ApiUser {
   id: number;
   email: string;
@@ -21,8 +21,14 @@ export const authOptions: AuthOptions = {
           return null;
         }
 
-        // O backend com OAuth2PasswordRequestForm espera dados de formulÃ¡rio, nÃ£o JSON.
-        const email = (credentials.email ?? '').trim();\n        const password = credentials.password ?? '';\n        if (!email || !password) { return null; }\n\n        const formData = new URLSearchParams();\n        formData.append('username', email);\n        formData.append('password', password);
+        // O backend com OAuth2PasswordRequestForm espera dados de formulário, não JSON.
+        const email = (credentials.email ?? '').trim();
+        const password = credentials.password ?? '';
+        if (!email || !password) { return null; }
+
+        const formData = new URLSearchParams();
+        formData.append('username', email);
+        formData.append('password', password);
 
         try {
           const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -45,14 +51,14 @@ export const authOptions: AuthOptions = {
 
           const user: ApiUser = await res.json();
 
-          // Se a resposta for bem-sucedida e tivermos um usuÃ¡rio, retorne-o.
+          // Se a resposta for bem-sucedida e tivermos um usuário, retorne-o.
           if (user) {
             return user;
           } else {
             return null;
           }
         } catch (error) {
-          console.error("Erro de rede ou conexÃ£o ao tentar fazer login:", error);
+          console.error("Erro de rede ou conexão ao tentar fazer login:", error);
           return null;
         }
       }
@@ -61,8 +67,8 @@ export const authOptions: AuthOptions = {
   callbacks: {
     // O callback 'jwt' Ã© chamado ao criar ou atualizar um JSON Web Token.
     async jwt({ token, user }) {
-      // O objeto 'user' sÃ³ estÃ¡ presente no primeiro login.
-      // Persistimos os dados do usuÃ¡rio (id e nickname) no token.
+      // O objeto 'user' só estÃ¡ presente no primeiro login.
+      // Persistimos os dados do usuário (id e nickname) no token.
       if (user) {
         const apiUser = user as ApiUser;
         token.id = apiUser.id;
@@ -70,12 +76,12 @@ export const authOptions: AuthOptions = {
       }
       return token;
     },
-    // O callback 'session' Ã© chamado quando um cliente verifica a sessÃ£o.
+    // O callback 'session' Ã© chamado quando um cliente verifica a sessão.
     async session({ session, token }) {
-      // Adicionamos os dados do token (id e nickname) para o objeto da sessÃ£o do cliente.
+      // Adicionamos os dados do token (id e nickname) para o objeto da sessão do cliente.
       if (session.user) {
         // O TypeScript precisa que a gente estenda o tipo 'Session' para reconhecer as novas propriedades.
-        // Faremos isso no prÃ³ximo passo.
+        // Faremos isso no próximo passo.
         (session.user as any).id = token.id;
         (session.user as any).nickname = token.nickname;
       }
@@ -96,5 +102,7 @@ export const authOptions: AuthOptions = {
 const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
+
+
 
 
