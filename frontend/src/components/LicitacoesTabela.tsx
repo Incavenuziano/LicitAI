@@ -1,7 +1,7 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getLicitacoes, requestAnalises, buscarLicitacoes } from "@/services/api";
+import { getLicitacoes, requestAnalises, buscarLicitacoes, getPrecosVencedores, PrecoVencedorResponse, ragIndexar, ragPerguntar } from "@/services/api";
 
 const UFS_BR = [
   "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA",
@@ -85,9 +85,14 @@ export default function LicitacoesTabela() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isAnalysing, setIsAnalysing] = useState(false);
   const [selectedAnalise, setSelectedAnalise] = useState<
-    { resultado: string; orgao?: string | null; numero?: string | null } | null
+    { resultado: string; orgao?: string | null; numero?: string | null; id?: number } | null
   >(null);
+  const [ragQuestion, setRagQuestion] = useState("");
+  const [ragLoading, setRagLoading] = useState(false);
+  const [ragIndexing, setRagIndexing] = useState(false);
+  const [ragAnswers, setRagAnswers] = useState<{ q: string; a: string }[]>([]);
   const [isFetchingNew, setIsFetchingNew] = useState(false);
+  const [precoModal, setPrecoModal] = useState<{ open: boolean; loading: boolean; fonte: 'comprasgov'|'pncp'|'ambas'; data?: PrecoVencedorResponse; licitacao?: Licitacao; error?: string }>({ open: false, loading: false, fonte: 'comprasgov' });
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
   const fetchData = async () => {
@@ -159,7 +164,7 @@ export default function LicitacoesTabela() {
         data_inicio: dataInicio || undefined,
         data_fim: dataFim || undefined,
       });
-      alert("Busca de novas licitações solicitada. A lista será atualizada.");
+      alert("Busca de novas licitações solicitada. A lista serÃ¡ atualizada.");
       setTimeout(fetchData, 1000);
     } catch (e) {
       console.error(e);
@@ -201,7 +206,33 @@ export default function LicitacoesTabela() {
         resultado: analise.resultado,
         orgao: licitacao.orgao_entidade_nome,
         numero: licitacao.numero_controle_pncp,
+        id: licitacao.id,
       });
+
+  const openPrecoModal = async (licitacao: Licitacao, fonte: "comprasgov"|"pncp"|"ambas" = "comprasgov") => {
+    setPrecoModal({ open: true, loading: true, fonte, licitacao });
+    try {
+      const data = await getPrecosVencedores(licitacao.id, fonte, 20);
+      setPrecoModal((s) => ({ ...s, data, loading: false, error: undefined }));
+    } catch (e: any) {
+      setPrecoModal((s) => ({ ...s, loading: false, error: e?.message || "Falha ao buscar preços" }));
+    }
+  };
+  const handleRagAsk = async () => {
+    if (!selectedAnalise?.id || !ragQuestion.trim()) return;
+    setRagLoading(true);
+    try {
+      const r = await ragPerguntar(selectedAnalise.id, ragQuestion, 4);
+      const answer = r.results.map((x) => x.chunk).join("\n\n---\n\n");
+      setRagAnswers((prev) => [{ q: ragQuestion, a: answer }, ...prev]);
+      setRagQuestion("");
+    } catch (e: any) {
+      alert(e?.message || "Falha ao consultar o edital");
+    } finally {
+      setRagLoading(false);
+    }
+  };
+
     } else {
       alert("Não foi possível carregar o resultado da análise.");
     }
@@ -359,14 +390,14 @@ export default function LicitacoesTabela() {
         </div>
       </div>
 
-      {/* Resultado da Análise (entre filtros e ações) */}
+      {/* Resultado da AnÃ¡lise (entre filtros e aÃ§Ãµes) */}
       {selectedAnalise && (
         <div className="mb-3 p-4 bg-blue-50 border border-blue-200 rounded">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-bold">
-              Resultado da Análise
-              {selectedAnalise.orgao ? ` — ${selectedAnalise.orgao}` : ""}
-              {selectedAnalise.numero ? ` — ${selectedAnalise.numero}` : ""}
+              Resultado da AnÃ¡lise
+              {selectedAnalise.orgao ? ` â€” ${selectedAnalise.orgao}` : ""}
+              {selectedAnalise.numero ? ` â€” ${selectedAnalise.numero}` : ""}
             </h3>
             <div className="flex items-center gap-2">
               <button
@@ -387,6 +418,49 @@ export default function LicitacoesTabela() {
           </div>
           <div className="whitespace-pre-wrap bg-white p-3 rounded border border-blue-100 font-mono text-sm max-h-96 overflow-auto">
             {selectedAnalise.resultado}
+          <div className="mt-3 rounded border border-blue-100 bg-white p-3">
+            <h4 className="font-semibold mb-2 text-sm">Perguntar ao Edital (RAG)</h4>
+            <div className="flex gap-2 mb-2">
+              <input
+                type="text"
+                value={ragQuestion}
+                onChange={(e) => setRagQuestion(e.target.value)}
+                placeholder="Ex.: Data limite para entrega? Garantia exigida?"
+                className="flex-1 px-3 py-2 border rounded"
+              />
+              <button
+                onClick={async () => {
+                  if (!selectedAnalise?.id) return;
+                  setRagIndexing(true);
+                  try { await ragIndexar(selectedAnalise.id); } catch {}
+                  finally { setRagIndexing(false); }
+                }}
+                className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
+                disabled={ragIndexing}
+              >
+                {ragIndexing ? "Indexando..." : "Indexar"}
+              </button>
+              <button
+                onClick={handleRagAsk}
+                disabled={ragLoading || !ragQuestion.trim()}
+                className="px-3 py-2 bg-indigo-600 text-white rounded disabled:bg-gray-400"
+              >
+                {ragLoading ? "Perguntando..." : "Perguntar"}
+              </button>
+            </div>
+            {ragAnswers.length > 0 && (
+              <div className="space-y-3 max-h-64 overflow-auto">
+                {ragAnswers.map((m, idx) => (
+                  <div key={idx} className="text-sm">
+                    <div className="text-gray-600">Q: {m.q}</div>
+                    <div className="whitespace-pre-wrap mt-1 border rounded p-2 bg-gray-50">
+                      {m.a}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           </div>
         </div>
       )}
@@ -420,7 +494,7 @@ export default function LicitacoesTabela() {
         )}
       </div>
 
-      {/* Tabela (layout clássico com cabeçalho fixo) */}
+      {/* Tabela (layout clÃ¡ssico com cabeÃ§alho fixo) */}
       <div className="rounded-lg border bg-white shadow-sm">
         <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
           {loading ? (
@@ -563,3 +637,6 @@ export default function LicitacoesTabela() {
     </div>
   );
 }
+
+
+
