@@ -4,7 +4,7 @@ import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "LicitAI",
-  description: "Plataforma de Licita\u00E7\u00F5es com IA",
+  description: "Plataforma de Licitações com IA",
 };
 
 export default function RootLayout({
@@ -14,6 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
+      <head>
+        <meta charSet="utf-8" />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>
