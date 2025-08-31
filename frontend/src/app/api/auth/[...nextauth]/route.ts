@@ -22,9 +22,7 @@ export const authOptions: AuthOptions = {
         }
 
         // O backend com OAuth2PasswordRequestForm espera dados de formulÃ¡rio, nÃ£o JSON.
-        const formData = new URLSearchParams();
-        formData.append('username', credentials.email); // O formulÃ¡rio do FastAPI usa 'username' para o email.
-        formData.append('password', credentials.password);
+        const email = (credentials.email ?? '').trim();\n        const password = credentials.password ?? '';\n        if (!email || !password) { return null; }\n\n        const formData = new URLSearchParams();\n        formData.append('username', email);\n        formData.append('password', password);
 
         try {
           const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -98,4 +96,5 @@ export const authOptions: AuthOptions = {
 const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
+
 

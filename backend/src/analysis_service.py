@@ -48,6 +48,10 @@ try:
 except Exception:  # pragma: no cover
     Image = None
 
+try:
+    from charset_normalizer import from_bytes as cn_from_bytes  # type: ignore
+except Exception:  # pragma: no cover
+    cn_from_bytes = None
 
 # --- ConfiguraÃ§Ãµes e utilitÃ¡rios de cache/paths ---
 _BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
@@ -655,7 +659,11 @@ def run_analysis(analise_id: int):
                 "Para OCR, instale Tesseract e pytesseract, ou forneca um link alternativo."
             )
 
-        # 6) Gera um resumo + dados estruturados
+        # 6) Normaliza e gera um resumo + dados estruturados
+        try:
+            texto_edital = unicodedata.normalize("NFC", texto_edital)
+        except Exception:
+            pass
         resumo, dados = _analisar_texto_edital_enriquecida(texto_edital)
 
         # 7) Complementa com um breve panorama do banco (Pandas)
@@ -693,3 +701,4 @@ def run_analysis(analise_id: int):
         print(
             f"[Analise ID: {analise_id}] - Analise finalizada e salva no banco com status: {status_final}."
         )
+
