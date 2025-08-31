@@ -1,6 +1,7 @@
-'use client';
+﻿'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +28,7 @@ export default function LoginPage() {
         password,
       });
       if (result?.error) {
-        setError('Email ou senha inválidos.');
+        setError('Email ou senha invÃ¡lidos.');
       } else if (result?.ok) {
         router.push('/');
         router.refresh();
@@ -37,6 +39,19 @@ export default function LoginPage() {
       setSubmitting(false);
     }
   };
+  // Lê erros do NextAuth (?error=...) e mostra na tela de login
+  useEffect(() => {
+    const code = searchParams.get('error');
+    if (!code) return;
+    const map: Record<string, string> = {
+      CredentialsSignin: 'Email ou senha inválidos.',
+      AccessDenied: 'Acesso negado.',
+      configuracaon: 'Erro de configuracao do login.',
+      default: 'Falha ao autenticar. Tente novamente.',
+    };
+    setError(map[code] || map.default);
+  }, [searchParams]);
+
 
   return (
     <div className="min-h-screen grid grid-cols-1 md:grid-cols-2 bg-licitai-bg-light">
@@ -53,11 +68,11 @@ export default function LoginPage() {
             <Image src="/logo_licitai.png" alt="LicitAI" width={112} height={112} className="w-full h-full object-contain" />
           </div>
           <h1 className="text-4xl font-bold text-licitai-primary mb-3">LicitAI</h1>
-          <p className="text-licitai-secondary">Acesse sua conta para gerenciar licitações com inteligência.</p>
+          <p className="text-licitaçõesse sua conta para gerenciar licitações com inteligência.</p>
         </div>
       </div>
 
-      {/* Formulário */}
+      {/* FormulÃ¡rio */}
       <div className="flex items-center justify-center p-6 md:p-12">
         <div className="w-full max-w-md">
           <div className="mb-8 flex items-center gap-3 md:hidden">
@@ -123,7 +138,7 @@ export default function LoginPage() {
                   <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-licitai-primary focus:ring-licitai-primary" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                   Lembrar de mim
                 </label>
-                <a href="#" className="text-sm text-licitai-secondary hover:underline">Esqueci minha senha</a>
+                <a href="#" className="text-sm text-licitaçõesqueci minha senha</a>
               </div>
 
               <button
@@ -140,7 +155,7 @@ export default function LoginPage() {
             </form>
 
             <div className="mt-6 text-center text-sm text-gray-600">
-              Não tem uma conta? <a href="#" className="text-licitai-secondary hover:underline">Cadastre-se</a>
+              NÃ£o tem uma conta? <a href="#" className="text-licitai-secondary hover:underline">Cadastre-se</a>
             </div>
           </div>
         </div>
@@ -148,4 +163,9 @@ export default function LoginPage() {
     </div>
   );
 }
+
+
+
+
+
 

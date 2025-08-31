@@ -87,6 +87,11 @@ export const authOptions: AuthOptions = {
   session: {
     strategy: "jwt",
   },
+  // Redireciona páginas do NextAuth para a tela de login
+  pages: {
+    signIn: "/login",
+    error: "/login",
+  },
   secret: process.env.NEXTAUTH_SECRET,
 };
 
