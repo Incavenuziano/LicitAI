@@ -14,6 +14,7 @@ from src.agents.agente_tratamento import salvar_licitacoes
 from src.integrations.anexos import comprasnet_contrato_arquivos, pncp_extrair_anexos_de_pagina
 from src.embeddings_service import index_licitacao, query_licitacao
 from src.database import get_db, engine
+from src.agents.agente_preco_vencedor import pesquisar_precos_vencedores_similares
 
 try:
     from src.agents.agno_agent import run_agent as run_agno_agent
@@ -201,3 +202,18 @@ def rag_perguntar(licitacao_id: int, req: RagQuestion, db: Session = Depends(get
         "question": req.question,
         "results": [{"score": float(s), "chunk": c} for s, c in top],
     }
+
+
+# --- Agente: Preço vencedor de itens similares ---
+class PrecoRequest(BaseModel):
+    top_k: Optional[int] = 20
+
+
+@app.get("/agentes/preco_vencedor/{licitacao_id}")
+async def agente_preco_vencedor(licitacao_id: int, top_k: Optional[int] = 20, fonte: Optional[str] = "comprasgov", db: Session = Depends(get_db)):
+    """Pesquisa preços vencedores de itens semelhantes à licitação informada e retorna estatísticas."""
+    result = await pesquisar_precos_vencedores_similares(db, licitacao_id, top_k_similares=top_k or 20, fonte=(fonte or "comprasgov"))
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
