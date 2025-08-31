@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getLicitacoes, requestAnalises, buscarLicitacoes, ragIndexar, ragPerguntar } from "@/services/api";
 import { Licitacao, Analise } from "@/types";
 
@@ -76,6 +77,7 @@ const getClassificacao = (objeto: string | null): string => {
 };
 
 export default function LicitacoesTabela() {
+  const router = useRouter();
   const [licitacoes, setLicitacoes] = useState<Licitacao[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroUF, setFiltroUF] = useState("");
@@ -515,12 +517,14 @@ export default function LicitacoesTabela() {
                 {licitacoesExibidas.map((licitacao) => (
                   <tr
                     key={licitacao.id}
-                    className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"}`}
+                    onClick={() => router.push(`/licitacoes/${licitacao.id}`)}
+                    className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"} cursor-pointer`}
                   >
                     <td className="py-2 px-3 border-b text-center whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(licitacao.id)}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={() => handleSelect(licitacao.id)}
                         className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                       />
@@ -544,7 +548,7 @@ export default function LicitacoesTabela() {
                           })
                         : "N/A"}
                     </td>
-                    <td className="py-2 px-4 border-b text-center whitespace-nowrap">
+                    <td className="py-2 px-4 border-b text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {licitacao.link_sistema_origem ? (
                         <a
                           href={licitacao.link_sistema_origem}
@@ -558,7 +562,7 @@ export default function LicitacoesTabela() {
                         "N/D"
                       )}
                     </td>
-                    <td className="py-2 px-4 border-b text-center whitespace-nowrap">
+                    <td className="py-2 px-4 border-b text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <Link
                         href={`/precos/${licitacao.id}`}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded text-sm"
@@ -591,4 +595,3 @@ export default function LicitacoesTabela() {
     </div>
   );
 }
-

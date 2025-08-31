@@ -264,3 +264,63 @@ async def pesquisar_precos_vencedores_similares(
         "stats": stats,
         "detalhes": detalhes,
     }
+
+
+async def pesquisar_precos_por_item(
+    db: Session,
+    descricao: str,
+    limit_ids: int = 30,
+    fonte: str = "comprasgov",
+) -> Dict[str, Any]:
+    """Pesquisa preços por descrição de item, consultando fontes públicas (ComprasGov e/ou PNCP).
+
+    - comprasgov: busca contratos pelo campo objeto e extrai preços de itens.
+    - pncp: como heurística, busca licitações no banco cujo objeto contenha palavras da descrição e tenta extrair
+      preços via APIs públicas do PNCP a partir do número de controle.
+    """
+    kws = _extract_keywords(descricao)
+    query = " ".join(kws) if kws else (descricao or "").strip()
+
+    all_prices: List[Tuple[str, float]] = []  # (fonte_tag, preco)
+    considerados: Dict[str, int] = {}
+
+    # Fonte ComprasGov
+    if fonte in ("comprasgov", "ambas") and query:
+        contrato_ids = await _compras_list_contratos_por_objeto(query, limit_ids=limit_ids)
+        considerados["comprasgov_contratos"] = len(contrato_ids)
+        for cid in contrato_ids:
+            try:
+                prices = await _compras_precos_itens_do_contrato(cid)
+                for p in prices:
+                    all_prices.append(("comprasgov", float(p)))
+            except Exception:
+                continue
+
+    # Fonte PNCP (heurística baseada em licitações do DB)
+    if fonte in ("pncp", "ambas") and kws:
+        # Busca até 100 licitações locais cujo objeto contenha ao menos uma palavra-chave
+        like_filters = [models.Licitacao.objeto_compra.ilike(f"%{kw}%") for kw in kws]
+        q = db.query(models.Licitacao)
+        # SQLAlchemy não tem OR direto sobre lista sem reduce, mas podemos encadear OR via string fallback
+        from sqlalchemy import or_  # type: ignore
+        q = q.filter(or_(*like_filters)).limit(100)
+        lics = q.all()
+        considerados["pncp_licitacoes"] = len(lics)
+        for li in lics:
+            try:
+                prices = await _tenta_precos_pncp_por_numero_controle(li.numero_controle_pncp)
+                for p in prices:
+                    all_prices.append(("pncp", float(p)))
+            except Exception:
+                continue
+
+    stats = _stats([p for _, p in all_prices])
+    detalhes = [{"fonte": f, "preco": p} for f, p in all_prices[:1000]]
+    return {
+        "query": descricao,
+        "fonte": fonte,
+        "considerados": considerados,
+        "precos_encontrados": len(all_prices),
+        "stats": stats,
+        "detalhes": detalhes,
+    }
