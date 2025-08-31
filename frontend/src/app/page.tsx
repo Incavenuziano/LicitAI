@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import LicitacoesTabela from '@/components/LicitacoesTabela';
 import { useSession, signOut } from 'next-auth/react';
@@ -29,11 +29,11 @@ export default function Home() {
         )}
       </div>
 
-      {status === 'loading' && <p>Carregando sessão...</p>}
+      {status === 'loading' && <p>{'Carregando sess\u00E3o...'}</p>}
 
       {status === 'authenticated' && (
         <div className="w-full">
-          <h2 className="text-xl mb-4 font-semibold">Licitações Abertas</h2>
+          <h2 className="text-xl mb-4 font-semibold">{'Licita\u00E7\u00F5es Abertas'}</h2>
           <LicitacoesTabela />
         </div>
       )}

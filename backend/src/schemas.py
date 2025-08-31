@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, Field
+from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List
 
@@ -9,8 +9,10 @@ class UserBase(BaseModel):
     email: str
     nickname: Optional[str] = None
 
+
 class UserCreate(UserBase):
     password: str
+
 
 class User(UserBase):
     id: int
@@ -18,15 +20,19 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
+
 # --- Esquemas para Análise ---
 # Definido antes de Licitação para que Licitação possa referenciá-lo
+
 
 class AnaliseBase(BaseModel):
     status: str = "Pendente"
     resultado: Optional[str] = None
 
+
 class AnaliseCreate(AnaliseBase):
     licitacao_id: int
+
 
 class Analise(AnaliseBase):
     id: int
@@ -39,6 +45,7 @@ class Analise(AnaliseBase):
 
 
 # --- Esquemas para Licitação ---
+
 
 class LicitacaoBase(BaseModel):
     numero_controle_pncp: str
@@ -55,17 +62,31 @@ class LicitacaoBase(BaseModel):
     data_encerramento_proposta: Optional[datetime] = None
     link_sistema_origem: Optional[str] = None
 
+
 class LicitacaoCreate(LicitacaoBase):
     pass
 
+
 class Licitacao(LicitacaoBase):
     id: int
-    analises: List[Analise] = [] # Relacionamento com Análises
+    analises: List[Analise] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
 
-# --- Esquemas para Requisições --- 
+
+# --- Esquemas para Requisições ---
+
 
 class AnaliseRequest(BaseModel):
     licitacao_ids: List[int]
+
+
+# --- Esquema para Busca de Licitações ---
+
+class BuscaLicitacoesRequest(BaseModel):
+    data_inicio: Optional[date] = None
+    data_fim: Optional[date] = None
+    uf: Optional[str] = None
+    codigo_modalidade: Optional[int] = 6
+    tamanho_pagina: Optional[int] = 10

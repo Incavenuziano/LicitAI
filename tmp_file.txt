@@ -1,0 +1,50 @@
+﻿import time
+import traceback
+from sqlalchemy.orm import Session
+from . import crud
+ 
+def run_analysis(db: Session, analise_id: int):
+    """
+    Esta Ã© a funÃ§Ã£o principal do nosso agente de anÃ¡lise.
+    Ela serÃ¡ executada em segundo plano.
+    """
+    print(f"[AnÃ¡lise ID: {analise_id}] - Iniciando anÃ¡lise...")
+
+    # Inicializa as variÃ¡veis para garantir que sempre tenham um valor no bloco finally
+    status_final = "Erro"
+    resultado_final = "Ocorreu um erro desconhecido que impediu a finalizaÃ§Ã£o da anÃ¡lise."
+
+    try:
+        # 1. Atualiza o status para 'Processando'
+        crud.update_analise(db, analise_id=analise_id, status="Processando", resultado="Iniciando...")
+
+        # 2. Pega o objeto da anÃ¡lise e a licitaÃ§Ã£o associada
+        analise = crud.get_analise(db, analise_id=analise_id)
+        if not analise:
+            print(f"[AnÃ¡lise ID: {analise_id}] - ERRO CRÃTICO: AnÃ¡lise nÃ£o encontrada apÃ³s ser criada.")
+            return
+
+        link_edital = analise.licitacao.link_sistema_origem
+        print(f"[AnÃ¡lise ID: {analise_id}] - Link do edital: {link_edital}")
+
+        # 3. Simula o trabalho pesado (download, leitura de PDF, IA)
+        print(f"[AnÃ¡lise ID: {analise_id}] - Simulando download e processamento do PDF...")
+        time.sleep(15) # Simula uma tarefa de 15 segundos
+
+        if not link_edital:
+            raise ValueError("Link do edital nÃ£o encontrado para a anÃ¡lise.")
+
+        resultado_final = f"AnÃ¡lise (simulada) do edital em {link_edital} concluÃ­da com sucesso."
+        status_final = "ConcluÃ­do"
+        print(f"[AnÃ¡lise ID: {analise_id}] - SimulaÃ§Ã£o concluÃ­da.")
+
+    except Exception as e:
+        print(f"[AnÃ¡lise ID: {analise_id}] - ERRO GERAL DURANTE A ANÃLISE: {e}")
+        full_traceback = traceback.format_exc()
+        resultado_final = f"Ocorreu um erro inesperado durante a anÃ¡lise.\\n\\nDetalhes do Erro:\\n{full_traceback}"
+        status_final = "Erro"
+
+    finally:
+        # 4. Atualiza o registro no banco com o resultado final (sucesso ou erro)
+        crud.update_analise(db, analise_id=analise_id, status=status_final, resultado=resultado_final)
+        print(f"[AnÃ¡lise ID: {analise_id}] - AnÃ¡lise finalizada e salva no banco com status: {status_final}.")

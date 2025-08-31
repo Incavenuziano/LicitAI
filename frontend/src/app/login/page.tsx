@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
@@ -22,7 +22,7 @@ export default function LoginPage() {
     });
 
     if (result?.error) {
-      setError('Email ou senha inválidos.');
+      setError('Email ou senha inv\u00E1lidos.');
     } else if (result?.ok) {
       router.push('/');
       router.refresh();
@@ -33,16 +33,16 @@ export default function LoginPage() {
     // Container principal do layout de duas colunas
     <div className="flex flex-col md:flex-row min-h-screen bg-[#F0F5F9]">
 
-      {/* Seção da Esquerda (Formulário) */}
+      {/* SeÃ§Ã£o da Esquerda (FormulÃ¡rio) */}
       <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-12">
         <div className="w-full max-w-sm">
           <h1 className="text-3xl font-bold text-[#003366] mb-2">Login</h1>
           <p className="text-sm text-gray-500 mb-8">Enter your account details</p>
 
-          {/* Exibição de erro */}
+          {/* ExibiÃ§Ã£o de erro */}
           {error && <p className="bg-red-100 text-red-700 p-3 mb-4 rounded text-sm">{error}</p>}
 
-          {/* Formulário */}
+          {/* FormulÃ¡rio */}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
@@ -72,7 +72,7 @@ export default function LoginPage() {
               />
             </div>
             
-            {/* Botão de Login */}
+            {/* BotÃ£o de Login */}
             <button
               type="submit"
               className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-[#005588] hover:bg-[#003366] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#003366] transition-all duration-200"
@@ -83,7 +83,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Seção da Direita (Elementos Visuais e Logo) */}
+      {/* SeÃ§Ã£o da Direita (Elementos Visuais e Logo) */}
       <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-12 bg-[#D1F2EB] relative overflow-hidden">
         {/* Elementos de "blob" de fundo para o efeito da imagem */}
         <div className="absolute inset-0 bg-no-repeat bg-contain bg-center opacity-40">
@@ -93,13 +93,13 @@ export default function LoginPage() {
           </svg>
         </div>
         
-        {/* Conteúdo do lado direito */}
+        {/* ConteÃºdo do lado direito */}
         <div className="relative z-10 text-center">
           <h1 className="text-4xl md:text-5xl font-bold text-[#003366] mb-4">
             Bem vindo(a) de volta
           </h1>
           <p className="text-sm md:text-base text-[#005588] mb-8 max-w-sm">
-            Acesse sua conta para gerenciar suas licitações de forma inteligente e eficiente.
+            {'Acesse sua conta para gerenciar suas licita\u00E7\u00F5es de forma inteligente e eficiente.'}
           </p>
 
           {/* Logo */}

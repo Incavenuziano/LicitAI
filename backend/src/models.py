@@ -42,3 +42,12 @@ class Analise(Base):
     
     # Relacionamento com a tabela de Licitações
     licitacao = relationship("Licitacao", back_populates="analises")
+
+
+class EditalEmbedding(Base):
+    __tablename__ = 'edital_embeddings'
+    id = Column(Integer, primary_key=True, index=True)
+    licitacao_id = Column(Integer, ForeignKey('licitacoes.id'), index=True, nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    embedding = Column(Text, nullable=False)  # JSON com a lista de floats

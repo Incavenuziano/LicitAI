@@ -1,62 +1,73 @@
 import json
+from typing import Optional
+
 import httpx
-import os
-from datetime import datetime, timedelta
 
-def consultar_licitacoes_publicadas(codigo_modalidade: int = 6) -> str:
+
+def consultar_licitacoes_publicadas(
+    codigo_modalidade: Optional[int] = 6,
+    data_inicial: Optional[str] = None,
+    data_final: Optional[str] = None,
+    uf: Optional[str] = None,
+    pagina: int = 1,
+    tamanho_pagina: int = 10,
+) -> str:
     """
-    Consulta licitações publicadas nos últimos 7 dias no PNCP, filtrando por modalidade.
+    Consulta licitações publicadas no PNCP com filtros opcionais.
 
-    Args:
-        codigo_modalidade (int, optional): O código da modalidade de contratação.
-                                         Padrão: 6 (Pregão - Eletrônico).
+    Parâmetros:
+      - codigo_modalidade: código da modalidade (ex.: 6 = Pregão Eletrônico)
+      - data_inicial, data_final: strings no formato YYYYMMDD
+      - uf: sigla da UF (se suportado pela API)
+      - pagina, tamanho_pagina: paginação
 
-    Returns:
-        str: Uma string JSON contendo a lista de licitações encontradas ou uma mensagem de erro.
+    Retorna: JSON string com lista encontrada ou mensagem/erro.
     """
-    print(f"--- Executando busca de licitações (modalidade={codigo_modalidade}) ---")
     base_url = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
-    
-    data_inicial = "20250101"
-    data_final = "20251231"
-    
-    params = {
-        "dataInicial": data_inicial,
-        "dataFinal": data_final,
-        "codigoModalidadeContratacao": codigo_modalidade,
-        "pagina": 1,
-        "tamanhoPagina": 10
+
+    params: dict[str, object] = {
+        "pagina": pagina,
+        "tamanhoPagina": tamanho_pagina,
     }
+    if codigo_modalidade is not None:
+        params["codigoModalidadeContratacao"] = codigo_modalidade
+    if data_inicial:
+        params["dataInicial"] = data_inicial
+    if data_final:
+        params["dataFinal"] = data_final
+    if uf:
+        params["uf"] = uf
 
     try:
-        print(f"--- Enviando requisição para a API com os parâmetros: {params} ---")
-        response = httpx.get(base_url, params=params, timeout=30.0)
+        print(f"--- Executando busca PNCP com parâmetros: {params} ---")
+        response = httpx.get(base_url, params=params, timeout=45.0)
         response.raise_for_status()
-        data = response.json()
-        
-        print("--- Consulta à API PNCP bem-sucedida ---")
-        
-        if 'data' in data and data['data']:
-            return json.dumps(data['data'], indent=2, ensure_ascii=False)
-        else:
-            return json.dumps({"mensagem": "Nenhuma licitação encontrada para os critérios fornecidos."}, indent=2)
-
+        payload = response.json()
+        print("--- Consulta ao PNCP bem-sucedida ---")
+        if isinstance(payload, dict) and payload.get("data"):
+            return json.dumps(payload["data"], indent=2, ensure_ascii=False)
+        return json.dumps({"mensagem": "Nenhuma licitação encontrada para os critérios fornecidos."}, indent=2, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
-        error_details = e.response.content.decode('utf-8', errors='replace')
+        error_details = e.response.content.decode("utf-8", errors="replace")
         print(f"--- Erro na API PNCP: {e.response.status_code} - {error_details} ---")
-        return json.dumps({"erro": "Falha ao consultar a API do PNCP.", "status_code": e.response.status_code, "detalhes": error_details})
+        return json.dumps({
+            "erro": "Falha ao consultar a API do PNCP.",
+            "status_code": e.response.status_code,
+            "detalhes": error_details,
+        }, ensure_ascii=False)
     except Exception as e:
         print(f"--- Erro inesperado: {e} ---")
-        return json.dumps({"erro": "Um erro inesperado ocorreu.", "detalhes": str(e)})
+        return json.dumps({"erro": "Um erro inesperado ocorreu.", "detalhes": str(e)}, ensure_ascii=False)
+
 
 if __name__ == "__main__":
     print("Iniciando teste de busca de licitações...")
     print("-----------------------------------------")
-    resultado_json = consultar_licitacoes_publicadas()
+    resultado_json = consultar_licitacoes_publicadas(codigo_modalidade=6, tamanho_pagina=5)
     print("\n--- Resultado da Consulta ---")
-    # Tenta formatar o JSON para melhor leitura
     try:
         resultado_formatado = json.loads(resultado_json)
         print(json.dumps(resultado_formatado, indent=2, ensure_ascii=False))
     except json.JSONDecodeError:
         print(resultado_json)
+

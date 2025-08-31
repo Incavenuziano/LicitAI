@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy>=1.4
+psycopg2-binary
+passlib[bcrypt]
+pydantic>=2
+python-multipart
+pandas
+httpx
+python-dotenv
+google-generativeai

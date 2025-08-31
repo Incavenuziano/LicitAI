@@ -1,9 +1,10 @@
 import { Licitacao } from '@/types';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export const getLicitacoes = async (): Promise<Licitacao[]> => {
   try {
     // Estamos buscando da URL da nossa API backend que está rodando na porta 8000
-    const response = await fetch('http://127.0.0.1:8000/licitacoes/');
+    const response = await fetch(`${API_URL}/licitacoes`);
     
     if (!response.ok) {
       // Se a resposta do servidor não for bem-sucedida, lançamos um erro.
@@ -22,7 +23,7 @@ export const getLicitacoes = async (): Promise<Licitacao[]> => {
 };
 
 export const requestAnalises = async (licitacao_ids: number[]): Promise<any> => {
-  const response = await fetch('http://localhost:8000/analises/', {
+  const response = await fetch(`${API_URL}/analises/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -38,3 +39,27 @@ export const requestAnalises = async (licitacao_ids: number[]): Promise<any> => 
 
   return response.json();
 };
+
+export interface BuscarLicitacoesPayload {
+  data_inicio?: string;
+  data_fim?: string;
+  uf?: string;
+  codigo_modalidade?: number;
+  tamanho_pagina?: number;
+}
+
+export const buscarLicitacoes = async (payload: BuscarLicitacoesPayload): Promise<any> => {
+  const response = await fetch(`${API_URL}/buscar_licitacoes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido na busca' }));
+    throw new Error(errorData.detail || 'Erro ao buscar licitações');
+  }
+  return response.json();
+};
+
+
+

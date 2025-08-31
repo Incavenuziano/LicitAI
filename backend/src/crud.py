@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from . import models, schemas
 from passlib.context import CryptContext
 
@@ -37,15 +37,15 @@ def create_licitacao(db: Session, licitacao: schemas.LicitacaoCreate) -> models.
     return db_licitacao
 
 def get_licitacoes(db: Session, skip: int = 0):
-    return db.query(models.Licitacao).offset(skip).all()
+    return db.query(models.Licitacao).options(joinedload(models.Licitacao.analises)).offset(skip).all()
 
 # --- CRUD para Análise ---
 
 def get_analise(db: Session, analise_id: int):
     """
-    Busca uma análise pelo seu ID.
+    Busca uma análise pelo seu ID, carregando a licitação associada.
     """
-    return db.query(models.Analise).filter(models.Analise.id == analise_id).first()
+    return db.query(models.Analise).options(joinedload(models.Analise.licitacao)).filter(models.Analise.id == analise_id).first()
 
 def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
     """

@@ -27,7 +27,8 @@ export const authOptions: AuthOptions = {
         formData.append('password', credentials.password);
 
         try {
-          const res = await fetch('http://localhost:8000/login', {
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const res = await fetch(`${baseUrl}/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: formData.toString(),
