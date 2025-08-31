@@ -14,11 +14,15 @@ def verify_password(plain_password, hashed_password):
 # --- CRUD para Usuário ---
 
 def get_user_by_email(db: Session, email: str):
-    return db.query(models.User).filter(models.User.email == email).first()
+    """Busca usuário por email, normalizando para lower-case."""
+    email_norm = (email or "").strip().lower()
+    return db.query(models.User).filter(models.User.email == email_norm).first()
 
 def create_user(db: Session, user: schemas.UserCreate):
+    """Cria usuário salvando email em lower-case para evitar duplicidade por case."""
+    email_norm = (user.email or "").strip().lower()
     hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=user.email, hashed_password=hashed_password, nickname=user.nickname)
+    db_user = models.User(email=email_norm, hashed_password=hashed_password, nickname=user.nickname)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)

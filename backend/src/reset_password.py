@@ -1,12 +1,11 @@
-import argparse
+﻿import argparse
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from . import crud, models
 
 
-def reset_or_create_user(db: Session, email: str, password: str, nickname: str | None = None) -> models.User:
-    user = crud.get_user_by_email(db, email=email)
+def reset_or_create_user(db: Session, email: str, password: str, nickname: str | None = None) -> models.User:\n    email = (email or "").strip().lower()\n    user = crud.get_user_by_email(db, email=email)
     hashed = crud.get_password_hash(password)
     if user:
         user.hashed_password = hashed
@@ -14,20 +13,20 @@ def reset_or_create_user(db: Session, email: str, password: str, nickname: str |
             user.nickname = nickname
         db.commit()
         db.refresh(user)
-        print(f"Senha atualizada para o usuário: {email}")
+        print(f"Senha atualizada para o usuÃ¡rio: {email}")
         return user
     else:
         user = models.User(email=email, hashed_password=hashed, nickname=nickname)
         db.add(user)
         db.commit()
         db.refresh(user)
-        print(f"Usuário criado: {email}")
+        print(f"UsuÃ¡rio criado: {email}")
         return user
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Resetar ou criar usuário (dev tool)")
-    parser.add_argument("--email", required=True, help="Email do usuário")
+    parser = argparse.ArgumentParser(description="Resetar ou criar usuÃ¡rio (dev tool)")
+    parser.add_argument("--email", required=True, help="Email do usuÃ¡rio")
     parser.add_argument("--password", required=True, help="Nova senha")
     parser.add_argument("--nickname", required=False, default=None, help="Nickname opcional")
     args = parser.parse_args()
@@ -41,4 +40,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
