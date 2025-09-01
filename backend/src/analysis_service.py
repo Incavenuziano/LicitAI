@@ -374,6 +374,271 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
         "flags": flags,
         "objeto": objeto,
     }
+    # --- Enriquecimentos adicionais ---
+    try:
+        # Telefones
+        telefones = re.findall(r"\b(?:\(?\d{2}\)?\s*)?\d{4,5}-\d{4}\b", texto)
+        if telefones:
+            dados["telefones"] = telefones[:5]
+    except Exception:
+        pass
+
+
+def _to_float(num_str: Optional[str]) -> Optional[float]:
+    try:
+        if num_str is None:
+            return None
+        s = str(num_str)
+        s = s.replace("\u00A0", " ").strip()  # NBSP
+        s = re.sub(r"(?i)r\$\s?", "", s)  # remove R$
+        s = s.replace(".", "").replace(",", ".")
+        s = re.sub(r"[^0-9\.-]", "", s)
+        if not s:
+            return None
+        return float(s)
+    except Exception:
+        return None
+
+
+def _extract_items_from_table_rows(rows: list[list]) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    if not rows:
+        return items
+
+    def norm(s: Any) -> str:
+        try:
+            return _strip_accents(str(s or "").strip().lower())
+        except Exception:
+            return ""
+
+    header_idx = None
+    header_map: Dict[int, str] = {}
+    key_map = {
+        "item": "item",
+        "n": "item",
+        "no": "item",
+        "nº": "item",
+        "descricao": "descricao",
+        "descri": "descricao",
+        "produto": "descricao",
+        "objeto": "descricao",
+        "quantidade": "quantidade",
+        "qtd": "quantidade",
+        "qtde": "quantidade",
+        "unidade": "unidade",
+        "und": "unidade",
+        "uni": "unidade",
+        "un": "unidade",
+        "valor unitario": "valor_unitario",
+        "preco unitario": "valor_unitario",
+        "vl unitario": "valor_unitario",
+        "valor total": "valor_total",
+        "vl total": "valor_total",
+        "preco total": "valor_total",
+        "marca": "marca",
+        "modelo": "modelo",
+    }
+
+    for i, row in enumerate(rows[:6]):
+        texts = [norm(c) for c in row]
+        score = 0
+        local_map: Dict[int, str] = {}
+        for j, txt in enumerate(texts):
+            for k, dst in key_map.items():
+                if k in txt and dst not in local_map.values():
+                    local_map[j] = dst
+                    score += 1
+                    break
+        if score >= 2:
+            header_idx = i
+            header_map = local_map
+            break
+
+    start_row = 0 if header_idx is None else header_idx + 1
+    for r in rows[start_row:]:
+        if not any(c for c in r):
+            continue
+        obj: Dict[str, Any] = {
+            "item": None,
+            "descricao": None,
+            "quantidade": None,
+            "unidade": None,
+            "valor_unitario": None,
+            "valor_total": None,
+            "marca": None,
+            "modelo": None,
+        }
+        for j, cell in enumerate(r):
+            key = header_map.get(j)
+            val = cell if cell is not None else ""
+            if key == "item":
+                m = re.search(r"\d+", str(val))
+                obj["item"] = int(m.group()) if m else None
+            elif key == "descricao":
+                obj["descricao"] = str(val).strip() or None
+            elif key == "quantidade":
+                obj["quantidade"] = _to_float(str(val))
+            elif key == "unidade":
+                obj["unidade"] = str(val).strip() or None
+            elif key == "valor_unitario":
+                obj["valor_unitario"] = _to_float(str(val))
+            elif key == "valor_total":
+                obj["valor_total"] = _to_float(str(val))
+            elif key == "marca":
+                obj["marca"] = str(val).strip() or None
+            elif key == "modelo":
+                obj["modelo"] = str(val).strip() or None
+
+        if obj.get("descricao") or any(obj.get(k) is not None for k in ("quantidade", "valor_unitario", "valor_total")):
+            items.append(obj)
+    return items
+
+
+def _extract_items_from_pdf_bytes(data: bytes) -> list[Dict[str, Any]]:
+    if pdfplumber is None:
+        return []
+    try:
+        items: list[Dict[str, Any]] = []
+        with pdfplumber.open(BytesIO(data)) as pdf:
+            for page in pdf.pages:
+                try:
+                    tables = page.extract_tables() or []
+                except Exception:
+                    tables = []
+                for t in tables:
+                    try:
+                        items.extend(_extract_items_from_table_rows(t))
+                    except Exception:
+                        continue
+        dedup = []
+        seen = set()
+        for it in items:
+            key = (
+                (it.get("descricao") or "").strip()[:60].lower(),
+                it.get("quantidade"),
+                (it.get("unidade") or "").lower(),
+            )
+            if key not in seen:
+                seen.add(key)
+                dedup.append(it)
+        return dedup
+    except Exception:
+        return []
+
+
+def _extract_items_from_text(texto: str) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    lines = [ln.strip() for ln in texto.splitlines()]
+    i = 0
+    while i < len(lines):
+        ln_norm = _strip_accents(lines[i].lower())
+        m = re.match(r"\bitem\s+(\d+)\b[:\-\.]?\s*(.*)", ln_norm)
+        if m:
+            try:
+                idx = int(m.group(1))
+            except Exception:
+                idx = None  # pragma: no cover
+            desc_parts = []
+            raw_after = lines[i][len(lines[i]) - len(lines[i].lstrip()):].strip()
+            if raw_after:
+                desc_parts.append(lines[i])
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                nxt_norm = _strip_accents(nxt.lower())
+                if re.match(r"\bitem\s+\d+\b", nxt_norm):
+                    break
+                if any(k in nxt_norm for k in ["quantidade", "qtde", "unidade", "valor unit", "valor total", "marca", "modelo"]):
+                    break
+                if nxt:
+                    desc_parts.append(nxt)
+                j += 1
+
+            bloco = " ".join([p for p in desc_parts if p]).strip()
+            lookahead = " ".join(lines[i:j+8])
+            la_norm = _strip_accents(lookahead.lower())
+            qtd = None
+            m_qtd = re.search(r"\b(qtde|quantidade)\s*[:\-]?\s*([\d\.,]+)", la_norm)
+            if m_qtd:
+                qtd = _to_float(m_qtd.group(2))
+            und = None
+            m_und = re.search(r"\b(unidade|un|und|uni)\s*[:\-]?\s*([a-zA-Z]{1,6})\b", la_norm)
+            if m_und:
+                und = m_und.group(2).upper()
+            vu = None
+            m_vu = re.search(r"valor\s*unit[a-z]*\s*[:\-]?\s*(r\$\s*)?([\d\.,]+)", la_norm)
+            if m_vu:
+                vu = _to_float(m_vu.group(2))
+            vt = None
+            m_vt = re.search(r"valor\s*total\s*[:\-]?\s*(r\$\s*)?([\d\.,]+)", la_norm)
+            if m_vt:
+                vt = _to_float(m_vt.group(2))
+            marca = None
+            modelo = None
+            window_lines = lines[i:j+8]
+            try:
+                brand_line = next((ln for ln in window_lines if re.search(r"\bmarca\b", _strip_accents(ln.lower()))), None)
+                if brand_line:
+                    m_b = re.search(r"marca\s*[:\-]?\s*(.+)$", brand_line, re.I)
+                    if m_b:
+                        marca = m_b.group(1).strip()
+            except Exception:
+                pass
+            try:
+                model_line = next((ln for ln in window_lines if re.search(r"\bmodelo\b", _strip_accents(ln.lower()))), None)
+                if model_line:
+                    m_m = re.search(r"modelo\s*[:\-]?\s*(.+)$", model_line, re.I)
+                    if m_m:
+                        modelo = m_m.group(1).strip()
+            except Exception:
+                pass
+
+            items.append({
+                "item": idx,
+                "descricao": bloco or None,
+                "quantidade": qtd,
+                "unidade": und,
+                "valor_unitario": vu,
+                "valor_total": vt,
+                "marca": marca,
+                "modelo": modelo,
+            })
+            i = j
+        else:
+            i += 1
+    return items
+    try:
+        # Datas por contexto (nomeadas)
+        nomeadas: Dict[str, Optional[str]] = {}
+        ctx_patterns = {
+            "data_abertura_propostas": r"abertura[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_sessao_publica": r"sess[a\u00e3o\u00e3o\u00e3][^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_limite_impugnacao": r"impugna[c\u00e7]ao?[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_visita_tecnica": r"visita t[e\u00e9]cnica[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+        }
+        for key, rx in ctx_patterns.items():
+            m = re.search(rx, lower)
+            nomeadas[key] = m.group(1) if m else None
+        dados["datas_nomeadas"] = nomeadas
+    except Exception:
+        pass
+
+    try:
+        # Itens / Lotes (heurstica leve)
+        norm = _strip_accents(lower)
+        itens_count = len(re.findall(r"\bitem\s+\d+\b", norm))
+        lotes_count = len(re.findall(r"\blote\s+\d+\b", norm))
+        dados["itens_detectados"] = {"itens": itens_count, "lotes": lotes_count}
+        resumo_partes.append(f"Itens/Lotes (heuristica): itens={itens_count}, lotes={lotes_count}")
+    except Exception:
+        pass
+
+    # Flags extras no resumo
+    try:
+        resumo_partes.append(f" - Consorcio: {'permitido' if dados['flags'].get('permite_consorcio') else 'nao mencionado'}")
+        resumo_partes.append(f" - Garantia: {'exige' if dados['flags'].get('exige_garantia') else 'nao identificado'}")
+    except Exception:
+        pass
 
     return "\n".join(resumo_partes), dados
 
@@ -537,10 +802,15 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
 
     # Download
     data, ctype = _fetch_url(link_edital)
+    itens: list[Dict[str, Any]] = []
     if data:
         is_pdf = ("pdf" in (ctype or "").lower()) or link_edital.lower().endswith(".pdf")
         if is_pdf:
             texto_edital = _extract_text_from_pdf(data)
+            try:
+                itens = _extract_items_from_pdf_bytes(data)
+            except Exception:
+                itens = []
             if not texto_edital or len(texto_edital) < 200:
                 ocr_txt = _ocr_pdf2(data)
                 if ocr_txt:
@@ -571,6 +841,10 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
                             continue
                         if (pctype and "pdf" in pctype.lower()) or pdf_url.lower().endswith(".pdf"):
                             pdf_text = _extract_text_from_pdf(pdata)
+                            try:
+                                itens = _extract_items_from_pdf_bytes(pdata)
+                            except Exception:
+                                itens = []
                             if not pdf_text or len(pdf_text) < 200:
                                 ocr_txt2 = _ocr_pdf2(pdata)
                                 if ocr_txt2:
@@ -592,6 +866,13 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
         )
         method = method or "Falha"
 
+    # Se nao encontrou itens via tabela, tenta fallback no texto
+    if not itens and texto_edital:
+        try:
+            itens = _extract_items_from_text(texto_edital)
+        except Exception:
+            itens = []
+
     # grava cache
     _cache_put(
         link_edital,
@@ -608,6 +889,8 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
         "ctype": ctype or "",
         "pdf_resolvido": pdf_resolvido,
         "from_cache": False,
+        "itens": itens,
+        "itens_count": len(itens),
     }
 
 def run_analysis(analise_id: int):

@@ -1,10 +1,10 @@
 import random
 import string
 from fastapi.testclient import TestClient
-from main import app
-
+from backend.main import app
+ 
 client = TestClient(app)
-
+ 
 def generate_random_email():
     """Gera um email aleatório para evitar conflitos no teste."""
     random_part = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))

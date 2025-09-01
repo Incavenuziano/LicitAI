@@ -1,0 +1,114 @@
+.container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.leftPanel {
+  width: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.rightPanel {
+  width: 50%;
+  background-color: #202cff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  padding: 2rem;
+}
+
+.logo {
+  width: 150px; /* Adjust as needed */
+  height: auto;
+  margin-bottom: 2rem;
+}
+
+.welcomeText {
+  font-size: 3rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.loginForm {
+  width: 100%;
+  max-width: 400px;
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: 700;
+  color: #202cff;
+  margin-bottom: 1rem;
+}
+
+.subtitle {
+  color: #6b7280; /* gray-500 */
+  margin-bottom: 2rem;
+}
+
+.inputGroup {
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+}
+
+.label {
+  color: #202cff;
+  font-weight: 400;
+  margin-right: 1rem;
+  white-space: nowrap;
+}
+
+.input {
+  width: 100%;
+  border: none;
+  border-bottom: 2px solid #d1d5db; /* gray-300 */
+  padding: 0.5rem;
+  background-color: transparent;
+}
+
+.input:focus {
+  outline: none;
+  border-bottom-color: #202cff;
+}
+
+.forgotPassword {
+  display: block;
+  text-align: right;
+  font-size: 0.875rem;
+  color: #202cff;
+  margin-bottom: 2rem;
+}
+
+.loginButton {
+  width: 100%;
+  background-color: #202cff;
+  color: white;
+  padding: 1rem;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.loginButton:hover {
+  background-color: #1a23cc;
+}
+
+.loginButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  color: red;
+  margin-bottom: 1rem;
+}

@@ -17,6 +17,8 @@ module.exports = {
         'licitai-visual-bg': '#D1F2EB',
         'licitai-visual-blob-light': '#C0EEDD',
         'licitai-visual-blob-dark': '#A0E0C0',
+        'licitai-blue-primary': '#202cff',
+        'licitai-blue-accent': '#6fd2e4',
       },
     },
   },

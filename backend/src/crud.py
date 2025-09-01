@@ -83,3 +83,17 @@ def update_analise(db: Session, analise_id: int, status: str, resultado: str):
         db.commit()
         db.refresh(db_analise)
     return db_analise
+
+def search_licitacoes_by_objeto(db: Session, query: str, limit: int = 50):
+    """
+    Busca licitações cujo objeto de compra contenha a string de busca.
+    Usa ILIKE para busca case-insensitive.
+    """
+    return db.query(models.Licitacao).filter(models.Licitacao.objeto_compra.ilike(f"%{query}%")).limit(limit).all()
+
+def search_licitacoes_by_objeto(db: Session, query: str, limit: int = 50):
+    """
+    Busca licitações cujo objeto de compra contenha a string de busca.
+    Usa ILIKE para busca case-insensitive.
+    """
+    return db.query(models.Licitacao).filter(models.Licitacao.objeto_compra.ilike(f"%{query}%")).limit(limit).all()

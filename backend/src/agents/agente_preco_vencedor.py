@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, crud
 
 
 def _clean_text(s: Optional[str]) -> str:
@@ -18,7 +18,7 @@ def _clean_text(s: Optional[str]) -> str:
 def _extract_keywords(texto: str, min_len: int = 4) -> List[str]:
     texto = _clean_text(texto)
     # remove pontuação simples
-    texto = re.sub(r"[.,;:/\\()\[\]{}'\"]+", " ", texto)
+    texto = re.sub(r"[.,;:/\\()[\]{}\"']+", " ", texto)
     toks = [t for t in texto.split() if len(t) >= min_len]
     # remove termos muito comuns
     stop = {
@@ -124,7 +124,7 @@ async def _tenta_precos_pncp_por_numero_controle(
                     elif isinstance(v, str):
                         # tenta parsear '12345,67' ou '12345.67'
                         if any(x in kl for x in ["valor", "preco", "price"]):
-                            m = re.findall(r"\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d{2})", v)
+                            m = re.findall(r"\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", v)
                             for s in m:
                                 try:
                                     s2 = s.replace(".", "").replace(",", ".")
