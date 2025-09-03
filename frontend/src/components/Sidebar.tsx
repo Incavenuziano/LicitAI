@@ -33,7 +33,7 @@ export default function Sidebar() {
   // Lista de itens de navegação para facilitar a manutenção
   const navItems = [
     { label: 'Dashboard', href: '/dashboard', icon: <PieChartIcon className="w-5 h-5" /> },
-    { label: 'Oportunidades', href: '/oportunidades', icon: <LightbulbIcon className="w-5 h-5" /> },
+    { label: 'Oportunidades', href: '/dashboard/oportunidades', icon: <LightbulbIcon className="w-5 h-5" /> },
     { label: 'Análises', href: '/analises', icon: <MagnifyingGlassIcon className="w-5 h-5" /> },
     { label: 'Preços', href: '/precos', icon: <DollarSignIcon className="w-5 h-5" /> },
     { label: 'Auxiliar Jurídico', href: '/juridico', icon: <BriefcaseIcon className="w-5 h-5" /> },
