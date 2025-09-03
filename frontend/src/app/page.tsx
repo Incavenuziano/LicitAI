@@ -1,42 +1,19 @@
 'use client';
 
-import dynamic from 'next/dynamic';
-const Dashboard = dynamic(() => import('@/components/Dashboard'), { ssr: false });
-import { useSession, signOut } from 'next-auth/react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // Import useRouter
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
-export default function Home() {
-  const { data: session, status } = useSession();
-  const router = useRouter(); // Initialize useRouter
+export default function HomePage() {
+  const router = useRouter();
 
-  // Redirect to login if unauthenticated
-  if (status === 'unauthenticated') {
-    router.push('/login');
-    return null; // Or a loading spinner, to prevent flickering
-  }
+  useEffect(() => {
+    router.replace('/dashboard');
+  }, [router]);
 
+  // Renderiza um componente de loading para evitar uma tela em branco durante o redirecionamento
   return (
-    <main className="flex min-h-screen flex-col">
-      <div className="w-full max-w-5xl items-center justify-between font-mono text-sm flex mb-8">
-        <h1 className="text-2xl font-bold">LicitAI</h1>
-        {status === 'authenticated' && session.user && (
-          <div className="flex items-center">
-            <span>Bem-vindo, {session.user.nickname || session.user.email}</span>
-            <button onClick={() => signOut()} className="ml-4 bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
-              Sair
-            </button>
-          </div>
-        )}
-      </div>
-
-      {status === 'loading' && <p>{'Carregando sess\u00E3o...'}</p>}
-
-      {status === 'authenticated' && (
-        <div className="w-full max-w-5xl">
-          <Dashboard />
-        </div>
-      )}
-    </main>
+    <div className="flex h-screen w-full items-center justify-center">
+      <p>Carregando...</p>
+    </div>
   );
 }

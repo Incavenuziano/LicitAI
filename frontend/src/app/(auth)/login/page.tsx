@@ -4,8 +4,8 @@ import type { NextPage } from 'next';
 import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
-import Image from 'next/image';
 import styles from './login.module.css';
+import LogoBranca from '@/components/LogoBranca';
 
 const LoginPage: NextPage = () => {
   const [email, setEmail] = useState('');
@@ -94,8 +94,8 @@ const LoginPage: NextPage = () => {
         </div>
       </div>
       <div className={styles.rightPanel}>
-        <Image src="/logo_licitai.png" alt="LicitAI Logo" width={150} height={150} className={styles.logo} />
         <div className={styles.welcomeText}>Bem vindo(a) de volta</div>
+        <LogoBranca className={styles.logo} />
       </div>
     </div>
   );

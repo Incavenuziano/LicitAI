@@ -18,15 +18,14 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-evenly;
   color: white;
   padding: 2rem;
 }
 
 .logo {
-  width: 150px; /* Adjust as needed */
+  width: 300px; /* Adjust as needed */
   height: auto;
-  margin-bottom: 2rem;
 }
 
 .welcomeText {
@@ -48,7 +47,7 @@
 }
 
 .subtitle {
-  color: #6b7280; /* gray-500 */
+  color: #202cff;
   margin-bottom: 2rem;
 }
 
