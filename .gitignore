@@ -13,3 +13,7 @@ __pycache__/
 /tesseract/
 tmp_*
 Erro.txt
+
+# Ignorar arquivos de modelo HTML
+frontend/icons_sidebar.html
+frontend/painel_dashboard.html
