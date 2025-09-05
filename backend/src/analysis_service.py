@@ -1,4 +1,4 @@
-﻿import time
+import time
 import traceback
 import re
 import os
@@ -16,6 +16,16 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal
 from . import crud
 from .agents.agente_analise import analisar_licitacoes_com_pandas
+from .integrations.pncp import (
+    pncp_buscar_por_link,
+    pncp_buscar_por_link_expanded,
+    pncp_buscar_por_numero_compra_expanded,
+    listar_documentos_compra,
+    baixar_documento_por_sequencial,
+)
+from .integrations.cnpj_resolver import resolve_cnpj_by_name_via_pncp, resolve_cnpj_by_name_via_google
+from . import crud as crud_mod
+from .integrations.anexos import pncp_extrair_anexos_de_pagina
 
 try:
     import requests  # type: ignore
@@ -31,6 +41,10 @@ try:
     import pdfplumber  # type: ignore
 except Exception:  # pragma: no cover
     pdfplumber = None
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract_text  # type: ignore
+except Exception:  # pragma: no cover
+    pdfminer_extract_text = None
 try:
     import pypdf  # type: ignore
 except Exception:  # pragma: no cover
@@ -52,6 +66,14 @@ try:
     from charset_normalizer import from_bytes as cn_from_bytes  # type: ignore
 except Exception:  # pragma: no cover
     cn_from_bytes = None
+
+# Playwright (opcional)
+try:
+    from playwright.sync_api import sync_playwright  # type: ignore
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
+except Exception:  # pragma: no cover
+    sync_playwright = None  # type: ignore
+    PlaywrightTimeoutError = Exception  # type: ignore
 
 # --- ConfiguraÃ§Ãµes e utilitÃ¡rios de cache/paths ---
 _BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
@@ -108,6 +130,21 @@ def _fetch_url(url: str, timeout: int = 25) -> Tuple[Optional[bytes], str]:
     except Exception:
         return None, ""
 
+def _robust_decode(data: bytes) -> str:
+    """Decodes byte string using charset-normalizer or falls back to utf-8."""
+    if not data:
+        return ""
+    if cn_from_bytes:
+        try:
+            results = cn_from_bytes(data)
+            best_match = results.best()
+            if best_match:
+                return str(best_match)
+        except Exception:
+            pass  # Fallback to default
+    # Fallback if library is missing or fails
+    return data.decode("utf-8", errors="replace")
+
 
 def _extract_text_from_pdf(data: bytes) -> Optional[str]:
     """Extrai texto de PDF priorizando pdfplumber; fallback para pypdf.
@@ -163,18 +200,29 @@ def _extract_text_from_pdf(data: bytes) -> Optional[str]:
 
     return None
 
+    # 3) Fallback pdfminer.six (quando disponível)
+    if pdfminer_extract_text is not None:
+        try:
+            from io import BytesIO as _BIO
+            txt = pdfminer_extract_text(_BIO(data))
+            txt = (txt or "").strip()
+            if txt:
+                return txt
+        except Exception:
+            pass
+
+    return None
+
 
 def _extract_text_from_html(data: bytes) -> Optional[str]:
+    html = _robust_decode(data)
     if BeautifulSoup is None:
         try:
-            # Fallback bÃ¡sico: remove tags com regex simples (nÃ£o perfeito)
-            html = data.decode("utf-8", errors="ignore")
             return re.sub(r"<[^>]+>", " ", html)
         except Exception:
             return None
     try:
-        soup = BeautifulSoup(data, "html.parser")
-        # Remove scripts/styles
+        soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "noscript"]):
             tag.extract()
         text = soup.get_text(separator=" ")
@@ -230,10 +278,8 @@ def _analisar_texto_edital(texto: str) -> str:
 def _find_pdf_links_from_html(data: bytes, base_url: str) -> list[str]:
     """Procura links de PDF em uma pÃ¡gina HTML e retorna URLs absolutas."""
     links: list[str] = []
-    html = None
-    try:
-        html = data.decode("utf-8", errors="ignore")
-    except Exception:
+    html = _robust_decode(data)
+    if not html:
         return links
 
     hrefs: list[str] = []
@@ -274,6 +320,228 @@ def _find_pdf_links_from_html(data: bytes, base_url: str) -> list[str]:
             unique.append(u)
             seen.add(u)
     return unique[:5]
+
+
+# --- Playwright: captura de download (PDF/ZIP) e resolucao do melhor PDF ---
+def _score_pdf_name(name: str) -> int:
+    """Pontua o arquivo por relevancia do nome.
+
+    Peso (exemplo):
+      edital > instrumento > termo de referencia > anexo.
+    """
+    try:
+        base = _strip_accents(name.lower())
+    except Exception:
+        base = name.lower()
+    score = 0
+    # Pesos principais
+    if "edital" in base:
+        score += 100
+    if "instrumento" in base or "instrumento convocatorio" in base:
+        score += 70
+    if ("termo" in base and "refer" in base) or "tr_" in base or "_tr" in base:
+        score += 60
+    if "anexo" in base:
+        score += 15
+    # Ajustes menores
+    if "retificacao" in base or "retifica" in base:
+        score += 5
+    if "minuta" in base and "contrat" in base:
+        score += 20
+    if base.endswith(".pdf"):
+        score += 5
+    return score
+
+
+def _extract_zip_best_pdf(zip_path: Path, out_dir: Path) -> Optional[Path]:
+    import zipfile
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(out_dir)
+        pdfs: list[Path] = []
+        for root, _, files in os.walk(out_dir):
+            for f in files:
+                if f.lower().endswith('.pdf'):
+                    pdfs.append(Path(root) / f)
+        if not pdfs:
+            return None
+        best = max(pdfs, key=lambda p: _score_pdf_name(p.name))
+        return best
+    except Exception:
+        return None
+
+
+def resolve_edital_pdf_with_playwright(url: str, download_base: Optional[Path] = None, timeout_ms: int = 30000) -> Optional[Path]:
+    """Abre a pagina com Playwright, tenta links/botoes de download e captura PDF/ZIP.
+
+    - Se ZIP, extrai e pontua PDFs por relevancia.
+    - Retorna caminho do PDF mais provavel ou None.
+
+    Requer:
+      pip install playwright
+      playwright install chromium
+    """
+    if sync_playwright is None:
+        return None
+    try:
+        base = download_base or (Path(__file__).resolve().parent.parent / 'tmp' / 'playwright_downloads')
+        base.mkdir(parents=True, exist_ok=True)
+        workdir = base / (str(int(time.time())) + '_' + _cache_key(url)[:8])
+        workdir.mkdir(parents=True, exist_ok=True)
+
+        with sync_playwright() as p:
+            headful_env = os.getenv("USE_PLAYWRIGHT_HEADFUL", "0").strip().lower() in {"1", "true", "yes"}
+            storage_state_path = os.getenv("PLAYWRIGHT_STORAGE", "").strip() or None
+            launch_kwargs = {}
+            if headful_env:
+                launch_kwargs["headless"] = False
+            else:
+                launch_kwargs["headless"] = True
+            # Try to look less like automation
+            browser = p.chromium.launch(**launch_kwargs)
+            context_kwargs = {
+                "accept_downloads": True,
+                "locale": "pt-BR",
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            }
+            if storage_state_path and Path(storage_state_path).exists():
+                context_kwargs["storage_state"] = str(storage_state_path)
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            page.set_default_timeout(timeout_ms)
+            page.goto(url)
+            try:
+                page.wait_for_load_state('networkidle', timeout=timeout_ms)
+            except PlaywrightTimeoutError:
+                pass
+
+            # Heuristicas de selecao de links/botoes
+            candidates = []
+            # Texto
+            texts = [
+                r"edital", r"instrumento", r"termo de referencia|TR", r"anexo",
+                r"baixar|download", r"abrir", r"visualizar",
+            ]
+            for t in texts:
+                try:
+                    candidates.append(page.locator(f"a:has-text(/{t}/i)"))
+                except Exception:
+                    pass
+            # Atributos
+            selectors = [
+                "a[download]", "a[href$=.pdf]", "a[href*=edital]", "a[href*=.zip]",
+                "button:has-text('Download')", "button:has-text('Baixar')",
+            ]
+            for sel in selectors:
+                try:
+                    candidates.append(page.locator(sel))
+                except Exception:
+                    pass
+
+            best_pdf: Optional[Path] = None
+
+            def handle_download(click_fn) -> Optional[Path]:
+                try:
+                    with page.expect_download(timeout=timeout_ms) as dl_info:
+                        click_fn()
+                    dl = dl_info.value
+                    suggested = dl.suggested_filename or 'download'
+                    target = workdir / suggested
+                    dl.save_as(str(target))
+                    if target.suffix.lower() == '.pdf':
+                        return target
+                    if target.suffix.lower() == '.zip':
+                        extracted_dir = workdir / (target.stem + "_unzipped")
+                        return _extract_zip_best_pdf(target, extracted_dir)
+                except PlaywrightTimeoutError:
+                    return None
+                except Exception:
+                    return None
+                return None
+
+            # 1) Tenta clicar em candidatos
+            for loc in candidates:
+                try:
+                    count = loc.count()
+                except Exception:
+                    continue
+                for i in range(min(count, 8)):
+                    el = loc.nth(i)
+                    try:
+                        if not el.is_visible():
+                            continue
+                    except Exception:
+                        pass
+                    res = handle_download(lambda e=el: e.click(force=False))
+                    if res and res.exists():
+                        best_pdf = res
+                        break
+                if best_pdf:
+                    break
+
+            # 2) Como fallback, tenta interceptar navegacoes/downloads genericos
+            if not best_pdf:
+                try:
+                    with page.expect_download(timeout=timeout_ms) as dl_info:
+                        page.keyboard.press('End')
+                        page.wait_for_timeout(400)
+                        page.keyboard.press('Home')
+                    dl = dl_info.value
+                    suggested = dl.suggested_filename or 'arquivo'
+                    target = workdir / suggested
+                    dl.save_as(str(target))
+                    if target.suffix.lower() == '.pdf':
+                        best_pdf = target
+                    elif target.suffix.lower() == '.zip':
+                        best_pdf = _extract_zip_best_pdf(target, workdir / (target.stem + '_unzipped'))
+                except Exception:
+                    pass
+
+            # 3) Se nao houve download, procura links diretos e baixa via requests
+            if not best_pdf:
+                try:
+                    hrefs = page.eval_on_selector_all('a', 'els => els.map(e => e.href)')
+                    if isinstance(hrefs, list):
+                        pdf_like = [h for h in hrefs if isinstance(h, str) and (h.lower().endswith('.pdf') or '.pdf' in h.lower())]
+                        pdf_like.sort(key=lambda u: _score_pdf_name(u.split('/')[-1]), reverse=True)
+                        for h in pdf_like[:5]:
+                            data, _ctype = _fetch_url(h)
+                            if data:
+                                fn = h.split('/')[-1] or 'arquivo.pdf'
+                                dest = workdir / fn
+                                dest.write_bytes(data)
+                                best_pdf = dest
+                                break
+                except Exception:
+                    pass
+
+            # 4) Caso ainda nao ache, escolhe melhor PDF no workdir
+            if not best_pdf:
+                try:
+                    all_pdfs = list(workdir.rglob('*.pdf'))
+                    if all_pdfs:
+                        best_pdf = max(all_pdfs, key=lambda p: _score_pdf_name(p.name))
+                except Exception:
+                    pass
+
+            context.close()
+            browser.close()
+            return best_pdf
+    except Exception:
+        return None
+
+
+def _map_modalidade_to_pncp_code(nome: Optional[str]) -> Optional[int]:
+    """Mapeia nome de modalidade para código PNCP (parcial, extensível)."""
+    if not nome:
+        return None
+    nm = _strip_accents(str(nome).lower())
+    # Principais
+    if "pregao" in nm:
+        return 6  # Pregão Eletrônico
+    # Outros podem ser adicionados conforme necessidade/documentação
+    return None
 
 
 def _strip_accents(s: str) -> str:
@@ -382,6 +650,9 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
             dados["telefones"] = telefones[:5]
     except Exception:
         pass
+
+    # Retorno principal: resumo em texto e dados estruturados
+    return "\n".join(resumo_partes), dados
 
 
 def _to_float(num_str: Optional[str]) -> Optional[float]:
@@ -532,7 +803,7 @@ def _extract_items_from_text(texto: str) -> list[Dict[str, Any]]:
     i = 0
     while i < len(lines):
         ln_norm = _strip_accents(lines[i].lower())
-        m = re.match(r"\bitem\s+(\d+)\b[:\-\.]?\s*(.*)", ln_norm)
+        m = re.match(r"\bitem\s+(\d+)\b[:\-\]?\s*(.*)", ln_norm)
         if m:
             try:
                 idx = int(m.group(1))
@@ -612,9 +883,9 @@ def _extract_items_from_text(texto: str) -> list[Dict[str, Any]]:
         nomeadas: Dict[str, Optional[str]] = {}
         ctx_patterns = {
             "data_abertura_propostas": r"abertura[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
-            "data_sessao_publica": r"sess[a\u00e3o\u00e3o\u00e3][^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
-            "data_limite_impugnacao": r"impugna[c\u00e7]ao?[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
-            "data_visita_tecnica": r"visita t[e\u00e9]cnica[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_sessao_publica": r"sess[aÃ£oÃ£oÃ£][^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_limite_impugnacao": r"impugna[cÃ§]ao?[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
+            "data_visita_tecnica": r"visita t[eÃ©]cnica[^\n]{0,50}?\b(\d{2}[/-]\d{2}[/-]\d{4})",
         }
         for key, rx in ctx_patterns.items():
             m = re.search(rx, lower)
@@ -624,7 +895,7 @@ def _extract_items_from_text(texto: str) -> list[Dict[str, Any]]:
         pass
 
     try:
-        # Itens / Lotes (heurstica leve)
+        # Itens / Lotes (heurÃ­stica leve)
         norm = _strip_accents(lower)
         itens_count = len(re.findall(r"\bitem\s+\d+\b", norm))
         lotes_count = len(re.findall(r"\blote\s+\d+\b", norm))
@@ -800,6 +1071,39 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
     ctype = ""
     texto_edital: Optional[str] = None
 
+    # Opcional: tentar Playwright primeiro para capturar downloads (controlado por env)
+    try:
+        use_pw = os.getenv("USE_PLAYWRIGHT_EDITAL", "0").strip().lower() in {"1", "true", "yes"}
+    except Exception:
+        use_pw = False
+    if use_pw:
+        try:
+            best_pdf = resolve_edital_pdf_with_playwright(link_edital)
+        except Exception:
+            best_pdf = None
+        if best_pdf and best_pdf.exists():
+            try:
+                data = best_pdf.read_bytes()
+                ctype = "application/pdf"
+                texto_edital = _extract_text_from_pdf(data)
+                try:
+                    itens = _extract_items_from_pdf_bytes(data)
+                except Exception:
+                    itens = []
+                if not texto_edital or len(texto_edital) < 200:
+                    ocr_txt = _ocr_pdf2(data)
+                    if ocr_txt:
+                        texto_edital = ocr_txt
+                        method = "OCR"
+                    else:
+                        method = "PDF-sem-texto"
+                else:
+                    method = "Extracao de texto"
+                pdf_resolvido = str(best_pdf)
+            except Exception:
+                # Continua com fluxo normal se falhar
+                texto_edital = None
+
     # Download
     data, ctype = _fetch_url(link_edital)
     itens: list[Dict[str, Any]] = []
@@ -862,7 +1166,7 @@ def extract_text_from_link(link_edital: str) -> Tuple[str, Dict[str, Any]]:
         texto_edital = (
             "Nao foi possivel extrair texto do edital automaticamente. "
             "O PDF pode estar protegido ou ser um documento escaneado (imagem). "
-            "Para OCR, instale Tesseract e Poppler (pdftoppm) e configure TESSERACT_CMD."
+            "Para OCR, instale Tesseract e pytesseract, ou forneca um link alternativo."
         )
         method = method or "Falha"
 
@@ -928,11 +1232,269 @@ def run_analysis(analise_id: int):
             raise ValueError("Link do edital nao encontrado para a analise.")
 
         # 4) Extrai o conteÃºdo (com cache e heurÃ­sticas robustas)
-        print(f"[Analise ID: {analise_id}] - Extraindo conteudo do edital (cache/heuristicas)...")
-        extracted_text, meta = extract_text_from_link(link_edital)
-        texto_edital: Optional[str] = extracted_text
-        ocr_usado = (meta.get("method") == "OCR") if isinstance(meta, dict) else False
-        pdf_resolvido: Optional[str] = meta.get("pdf_resolvido") if isinstance(meta, dict) else None
+        print(f"[Analise ID: {analise_id}] - Tentando PNCP antes de baixar pelo site...")
+        texto_edital: Optional[str] = None
+        meta: Dict[str, Any] = {}
+        pdf_resolvido: Optional[str] = None
+        ocr_usado = False
+
+        # 4.a) Tenta via PNCP (publicacoes) encontrar o link do processo e anexos
+        try:
+            use_pncp = os.getenv("USE_PNCP_API", "1").strip().lower() in {"1", "true", "yes"}
+        except Exception:
+            use_pncp = True
+        if use_pncp:
+            try:
+                lic = analise.licitacao
+                cod_mod = _map_modalidade_to_pncp_code(getattr(lic, "modalidade_nome", None))
+                row = None
+                if cod_mod and getattr(lic, "data_publicacao_pncp", None):
+                    row = pncp_buscar_por_link(
+                        link_sistema_origem=link_edital,
+                        data_ref=lic.data_publicacao_pncp,
+                        codigo_modalidade=cod_mod,
+                        uf=getattr(lic, "uf", None),
+                    )
+                    # Se não achou, tenta busca expandida (múltiplas modalidades e janelas)
+                    if not row:
+                        row = pncp_buscar_por_link_expanded(
+                            link_sistema_origem=link_edital,
+                            data_hint=getattr(lic, "data_publicacao_pncp", None),
+                            uf=getattr(lic, "uf", None),
+                            cnpj=None,
+                            total_days=365,
+                            step_days=30,
+                            page_limit=10,
+                        )
+                # Se ainda não achou, tenta por númeroCompra (sequencial/ano), para descobrir CNPJ e detalhes
+                if not row:
+                    seq = getattr(lic, "sequencial_compra", None)
+                    ano = getattr(lic, "ano_compra", None)
+                    if seq and ano:
+                        try:
+                            row = pncp_buscar_por_numero_compra_expanded(
+                                (int(seq), int(ano)),
+                                data_hint=getattr(lic, "data_publicacao_pncp", None),
+                                uf=getattr(lic, "uf", None),
+                                total_days=365,
+                                step_days=30,
+                                page_limit=10,
+                            )
+                        except Exception:
+                            row = None
+                # Se ainda não achou, tenta resolver CNPJ por nome do órgão e consultar por chave
+                if not row:
+                    org_name = getattr(lic, "orgao_entidade_nome", None)
+                    if org_name and getattr(lic, "sequencial_compra", None) and getattr(lic, "ano_compra", None):
+                        cnpj_guess = resolve_cnpj_by_name_via_pncp(org_name, uf=getattr(lic, "uf", None))
+                        if not cnpj_guess:
+                            cnpj_guess = resolve_cnpj_by_name_via_google(org_name)
+                        if cnpj_guess:
+                            try:
+                                det = pncp_compra_por_chave(str(cnpj_guess), int(getattr(lic, "ano_compra")), int(getattr(lic, "sequencial_compra")))
+                                if isinstance(det, dict):
+                                    row = det
+                            except Exception:
+                                pass
+                if row:
+                    # 1) Tenta API de Documentos do PNCP (se configurado)
+                    try:
+                        use_docs = os.getenv("USE_PNCP_DOCS", "1").strip().lower() in {"1", "true", "yes"}
+                    except Exception:
+                        use_docs = True
+                    cnpj = None
+                    ano_c = None
+                    seq_c = None
+                    try:
+                        ent = row.get("orgaoEntidade") or {}
+                        cnpj = ent.get("cnpj")
+                        ano_c = row.get("anoCompra")
+                        seq_c = row.get("sequencialCompra")
+                    except Exception:
+                        pass
+                    if use_docs and cnpj and ano_c and seq_c:
+                        docs = listar_documentos_compra(str(cnpj), int(ano_c), int(seq_c))
+                        # Seleciona melhor documento (por título/tipo/nome do arquivo se existir url)
+                        def _doc_score(d: dict) -> int:
+                            name = (d.get("titulo") or d.get("tipo_nome") or "").lower()
+                            return _score_pdf_name(name)
+                        if docs:
+                            best = max(docs, key=_doc_score)
+                            saved_path: Optional[str] = None
+                            # Se houver URL direta, tenta baixar por URL; senão baixa por sequencial
+                            url_direct = best.get("url")
+                            if url_direct:
+                                data, ctype_hint = _fetch_url(url_direct)
+                                if data:
+                                    # Salva em tmp
+                                    outdir = Path(__file__).resolve().parent.parent / 'tmp' / 'pncp_docs'
+                                    outdir.mkdir(parents=True, exist_ok=True)
+                                    fn = url_direct.split('/')[-1] or 'documento.pdf'
+                                    outp = outdir / fn
+                                    outp.write_bytes(data)
+                                    saved_path = str(outp)
+                                    ctype_used = ctype_hint or "application/octet-stream"
+                                else:
+                                    saved_path = None
+                                    ctype_used = ""
+                            if not saved_path:
+                                try:
+                                    saved_path = baixar_documento_por_sequencial(str(cnpj), int(ano_c), int(seq_c), int(best.get("sequencial")))
+                                    ctype_used = "application/octet-stream"
+                                except Exception:
+                                    saved_path = None
+                                    ctype_used = ""
+                            if saved_path and Path(saved_path).exists():
+                                sp = Path(saved_path)
+                                # registra anexo
+                                try:
+                                    sha = hashlib.sha256(sp.read_bytes()).hexdigest()
+                                    crud_mod.create_anexo(
+                                        db,
+                                        licitacao_id=getattr(lic, 'id', None),
+                                        source='pncp_docs',
+                                        url=url_direct,
+                                        filename=sp.name,
+                                        local_path=str(sp),
+                                        content_type=ctype_used,
+                                        size_bytes=sp.stat().st_size,
+                                        sha256=sha,
+                                        score=None,
+                                        status='saved',
+                                        error=None,
+                                    )
+                                except Exception:
+                                    pass
+                                if sp.suffix.lower() == '.zip':
+                                    extracted = _extract_zip_best_pdf(sp, sp.parent / (sp.stem + '_unzipped'))
+                                    if extracted and extracted.exists():
+                                        data = extracted.read_bytes()
+                                        pdf_resolvido = str(extracted)
+                                    else:
+                                        data = sp.read_bytes()
+                                        pdf_resolvido = str(sp)
+                                else:
+                                    data = sp.read_bytes()
+                                    pdf_resolvido = str(sp)
+                                texto_edital = _extract_text_from_pdf(data)
+                                try:
+                                    itens = _extract_items_from_pdf_bytes(data)
+                                except Exception:
+                                    itens = []
+                                if not texto_edital or len(texto_edital) < 200:
+                                    ocr_txt = _ocr_pdf2(data)
+                                    if ocr_txt:
+                                        texto_edital = ocr_txt
+                                        ocr_usado = True
+                                meta = {
+                                    "method": "PNCP-Docs" if not ocr_usado else "PNCP-Docs+OCR",
+                                    "ctype": ctype_used,
+                                    "pdf_resolvido": pdf_resolvido,
+                                    "from_cache": False,
+                                    "itens": itens,
+                                    "itens_count": len(itens),
+                                }
+                            else:
+                                # fallback para página pública
+                                page_link = (row.get("linkProcessoEletronico") or row.get("linkSistemaOrigem") or link_edital)
+                                pdfs = pncp_extrair_anexos_de_pagina(page_link)
+                                if pdfs:
+                                    best_url = max(pdfs, key=lambda u: _score_pdf_name(u.split('/')[-1]))
+                                    data, ctype_hint = _fetch_url(best_url)
+                                    if data:
+                                        texto_edital = _extract_text_from_pdf(data)
+                                        try:
+                                            itens = _extract_items_from_pdf_bytes(data)
+                                        except Exception:
+                                            itens = []
+                                        if not texto_edital or len(texto_edital) < 200:
+                                            ocr_txt = _ocr_pdf2(data)
+                                            if ocr_txt:
+                                                texto_edital = ocr_txt
+                                                ocr_usado = True
+                                        meta = {
+                                            "method": "PNCP-API+HTML" if not ocr_usado else "PNCP-API+OCR",
+                                            "ctype": ctype_hint or "application/pdf",
+                                            "pdf_resolvido": best_url,
+                                            "from_cache": False,
+                                            "itens": itens,
+                                            "itens_count": len(itens),
+                                        }
+                                        pdf_resolvido = best_url
+                                        # registra anexo remoto (sem arquivo local)
+                                        try:
+                                            crud_mod.create_anexo(
+                                                db,
+                                                licitacao_id=getattr(lic, 'id', None),
+                                                source='pncp_html',
+                                                url=best_url,
+                                                filename=best_url.split('/')[-1],
+                                                local_path=None,
+                                                content_type=ctype_hint or '',
+                                                size_bytes=None,
+                                                sha256=None,
+                                                score=None,
+                                                status='saved',
+                                                error=None,
+                                            )
+                                        except Exception:
+                                            pass
+                    else:
+                        # Sem cnpj/ano/seq: tenta página pública
+                        page_link = (row.get("linkProcessoEletronico") or row.get("linkSistemaOrigem") or link_edital)
+                        pdfs = pncp_extrair_anexos_de_pagina(page_link)
+                        if pdfs:
+                            best_url = max(pdfs, key=lambda u: _score_pdf_name(u.split('/')[-1]))
+                            data, ctype_hint = _fetch_url(best_url)
+                            if data:
+                                texto_edital = _extract_text_from_pdf(data)
+                                try:
+                                    itens = _extract_items_from_pdf_bytes(data)
+                                except Exception:
+                                    itens = []
+                                if not texto_edital or len(texto_edital) < 200:
+                                    ocr_txt = _ocr_pdf2(data)
+                                    if ocr_txt:
+                                        texto_edital = ocr_txt
+                                        ocr_usado = True
+                                meta = {
+                                    "method": "PNCP-API+HTML" if not ocr_usado else "PNCP-API+OCR",
+                                    "ctype": ctype_hint or "application/pdf",
+                                    "pdf_resolvido": best_url,
+                                    "from_cache": False,
+                                    "itens": itens,
+                                    "itens_count": len(itens),
+                                }
+                                pdf_resolvido = best_url
+                                # registra anexo remoto
+                                try:
+                                    crud_mod.create_anexo(
+                                        db,
+                                        licitacao_id=getattr(lic, 'id', None),
+                                        source='pncp_html',
+                                        url=best_url,
+                                        filename=best_url.split('/')[-1],
+                                        local_path=None,
+                                        content_type=ctype_hint or '',
+                                        size_bytes=None,
+                                        sha256=None,
+                                        score=None,
+                                        status='saved',
+                                        error=None,
+                                    )
+                                except Exception:
+                                    pass
+            except Exception:
+                pass
+
+        # 4.b) Fallback para fluxo atual (requests/HTML/PDF/OCR ou Playwright, se habilitado)
+        if not texto_edital:
+            print(f"[Analise ID: {analise_id}] - Extraindo conteudo do edital (cache/heuristicas)...")
+            extracted_text, meta2 = extract_text_from_link(link_edital)
+            texto_edital = extracted_text
+            meta = meta2 if isinstance(meta2, dict) else {}
+            ocr_usado = (meta.get("method") == "OCR") if isinstance(meta, dict) else False
+            pdf_resolvido = meta.get("pdf_resolvido") if isinstance(meta, dict) else None
 
         # 5) Se nao conseguiu extrair texto, gera orientacao
         if not texto_edital:
@@ -941,6 +1503,7 @@ def run_analysis(analise_id: int):
                 "O PDF pode estar protegido ou ser um documento escaneado (imagem). "
                 "Para OCR, instale Tesseract e pytesseract, ou forneca um link alternativo."
             )
+            method = method or "Falha"
 
         # 6) Normaliza e gera um resumo + dados estruturados
         try:
@@ -954,14 +1517,42 @@ def run_analysis(analise_id: int):
         panorama = analisar_licitacoes_com_pandas()
 
         metodo = meta.get("method", "Extracao de texto") if isinstance(meta, dict) else ("OCR" if ocr_usado else "Extracao de texto")
+        # Formata saida melhor estruturada
+        bullets = []
+        bullets.append(f"- Link: {link_edital}")
+        bullets.append(f"- Método: {metodo}")
+        bullets.append(f"- PDF resolvido: {pdf_resolvido or 'N/A'}")
+        if isinstance(meta, dict):
+            if meta.get('ctype'):
+                bullets.append(f"- Content-Type: {meta.get('ctype')}")
+            if meta.get('itens_count'):
+                bullets.append(f"- Itens extraídos: {meta.get('itens_count')}")
+
+        # Campos chave do 'dados'
+        chave_lines = []
+        try:
+            chave_lines.append(f"Modalidade: {dados.get('modalidade') or 'indefinida'}")
+            if dados.get('classificacao'):
+                chave_lines.append(f"Classificação: {dados.get('classificacao')}")
+            if dados.get('maior_valor'):
+                chave_lines.append(f"Maior valor (amostra): {dados.get('maior_valor')}")
+            if dados.get('datas_amostra'):
+                chave_lines.append(f"Datas (amostra): {', '.join(dados.get('datas_amostra') or [])}")
+            if dados.get('objeto'):
+                chave_lines.append(f"Objeto (aprox.): {dados.get('objeto')}")
+        except Exception:
+            pass
+
         resultado_final = (
-            "Resultado da analise do edital:\n"
-            f"- Link: {link_edital}\n"
-            f"- Metodo: {metodo}\\n\\n"
-            f"- PDF resolvido: {pdf_resolvido or 'N/A'}\\n\\n"
-            f"Resumo do edital:\n{resumo}\n\n"
-            f"Detalhes extraidos (JSON):\n{json.dumps(dados, ensure_ascii=False, indent=2)}\n\n"
-            f"Panorama do banco (Pandas):\n{panorama}"
+            "Análise do Edital\n"
+            + "\n".join(bullets)
+            + "\n\nResumo\n"
+            + resumo
+            + ("\n\nChaves\n" + "\n".join(f"- {l}" for l in chave_lines) if chave_lines else "")
+            + "\n\nDetalhes (JSON)\n"
+            + json.dumps(dados, ensure_ascii=False, indent=2)
+            + "\n\nPanorama (Banco / Pandas)\n"
+            + str(panorama)
         )
         status_final = "Concluido"
         print(f"[Analise ID: {analise_id}] - Analise concluida.")
@@ -984,4 +1575,3 @@ def run_analysis(analise_id: int):
         print(
             f"[Analise ID: {analise_id}] - Analise finalizada e salva no banco com status: {status_final}."
         )
-

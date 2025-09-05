@@ -13,6 +13,9 @@ from src import crud, models, schemas, analysis_service
 from src.agents.agente_busca import consultar_licitacoes_publicadas
 from src.agents.agente_tratamento import salvar_licitacoes
 from src.integrations.anexos import comprasnet_contrato_arquivos, pncp_extrair_anexos_de_pagina
+from src.integrations.pncp import listar_documentos_compra, baixar_documento_por_sequencial
+from src.integrations.pncp import pncp_buscar_por_link_expanded
+from src.integrations.comprasnet import comprasnet_buscar_por_termo
 from src.embeddings_service import index_licitacao, query_licitacao
 from src.database import get_db, engine
 from src.agents.agente_preco_vencedor import pesquisar_precos_vencedores_similares, pesquisar_precos_por_item
@@ -140,6 +143,129 @@ def anexos_comprasnet_contrato(contrato_id: int, base_url: Optional[str] = None)
 def anexos_pncp(link: str):
     pdfs = pncp_extrair_anexos_de_pagina(link)
     return {"link": link, "pdfs": pdfs, "count": len(pdfs)}
+
+@app.get("/anexos/licitacao/{licitacao_id}")
+def anexos_por_licitacao(licitacao_id: int, db: Session = Depends(get_db)):
+    lic = db.query(models.Licitacao).filter(models.Licitacao.id == licitacao_id).first()
+    if not lic or not lic.link_sistema_origem:
+        raise HTTPException(status_code=404, detail="Licitação não encontrada ou sem link.")
+
+    def map_modalidade(nome: Optional[str]) -> Optional[int]:
+        if not nome:
+            return None
+        nm = (nome or "").lower()
+        if "preg" in nm:  # pregão / pregão eletrônico
+            return 6
+        return None
+
+    pdfs: list[str] = []
+    fonte = "fallback"
+    page_link_used: Optional[str] = None
+    pncp_numero: Optional[str] = None
+
+    try:
+        # A busca expandida não precisa do código da modalidade mapeado
+        row = pncp_buscar_por_link_expanded(
+            link_sistema_origem=lic.link_sistema_origem,
+            data_hint=lic.data_publicacao_pncp,
+            uf=getattr(lic, "uf", None),
+        )
+        if isinstance(row, dict):
+            pncp_numero = row.get("numeroControlePNCP")
+            page_link = row.get("linkProcessoEletronico") or row.get("linkSistemaOrigem") or lic.link_sistema_origem
+            page_link_used = page_link
+            pdfs = pncp_extrair_anexos_de_pagina(page_link)
+            fonte = "pncp_expanded" # Mudei a fonte para sabermos que a nova função foi usada
+    except Exception:
+        pass
+
+    # Fallback: se a busca por link no PNCP falhou, tenta busca por termo no Comprasnet
+    if not pncp_numero and lic.objeto_compra:
+        print(f"INFO: PNCP link search failed. Falling back to Comprasnet keyword search for: {lic.objeto_compra[:50]}...")
+        try:
+            potential_matches = comprasnet_buscar_por_termo(lic.objeto_compra)
+            if potential_matches:
+                print(f"INFO: Found {len(potential_matches)} potential matches on Comprasnet.")
+                
+                # TODO: Implementar lógica de pontuação (scoring) para escolher o melhor match
+                # Por enquanto, estamos pegando o primeiro resultado como prova de conceito.
+                best_match = potential_matches[0]
+                
+                # Tenta usar os dados do Comprasnet para encontrar os anexos
+                # A estrutura do 'best_match' pode precisar de ajustes conforme a API real
+                comprasnet_link = best_match.get('link')
+                if comprasnet_link:
+                    page_link_used = comprasnet_link
+                    pdfs = pncp_extrair_anexos_de_pagina(page_link_used)
+                    fonte = "comprasnet_keyword"
+                    # O resultado do Comprasnet pode ou não ter o número do PNCP
+                    pncp_numero = best_match.get('numero_controle_pncp') or pncp_numero
+
+        except Exception as e:
+            print(f"WARN: Comprasnet fallback search failed with error: {e}")
+            pass
+
+    # fallback: tenta direto no link do sistema de origem
+    if not pdfs:
+        pdfs = pncp_extrair_anexos_de_pagina(lic.link_sistema_origem)
+        page_link_used = page_link_used or lic.link_sistema_origem
+
+    # remove duplicatas
+    seen = set()
+    uniq = []
+    for u in pdfs:
+        if u not in seen:
+            uniq.append(u)
+            seen.add(u)
+
+    return {
+        "licitacao_id": licitacao_id,
+        "fonte": fonte,
+        "page_link": page_link_used,
+        "numero_controle_pncp": pncp_numero or getattr(lic, "numero_controle_pncp", None),
+        "pdfs": uniq,
+        "count": len(uniq),
+    }
+
+# --- PNCP: Documentos da compra (debug/uso direto) ---
+@app.get("/pncp/compra/{cnpj}/{ano}/{sequencial}/documentos")
+def pncp_documentos_compra(cnpj: str, ano: int, sequencial: int):
+    docs = listar_documentos_compra(cnpj, ano, sequencial)
+    return {"cnpj": cnpj, "ano": ano, "sequencial": sequencial, "documentos": docs, "count": len(docs)}
+
+
+class PNCPDocDownload(BaseModel):
+    licitacao_id: Optional[int] = None
+
+
+@app.post("/pncp/compra/{cnpj}/{ano}/{sequencial}/documentos/{seq_doc}/download")
+def pncp_baixar_documento(cnpj: str, ano: int, sequencial: int, seq_doc: int, body: PNCPDocDownload | None = None, db: Session = Depends(get_db)):
+    path = baixar_documento_por_sequencial(cnpj, ano, sequencial, seq_doc)
+    if not path:
+        raise HTTPException(status_code=404, detail="Documento não encontrado/baixado")
+    # opcional: registrar anexo
+    try:
+        import hashlib
+        from pathlib import Path
+        p = Path(path)
+        sha = hashlib.sha256(p.read_bytes()).hexdigest()
+        crud.create_anexo(
+            db,
+            licitacao_id=(body.licitacao_id if body else None),
+            source='pncp_docs',
+            url=None,
+            filename=p.name,
+            local_path=str(p),
+            content_type='',
+            size_bytes=p.stat().st_size,
+            sha256=sha,
+            score=None,
+            status='saved',
+            error=None,
+        )
+    except Exception:
+        pass
+    return {"saved_path": path}
 
 # --- Agente (Gemini-flash via Agno) ---
 class AgentRunRequest(BaseModel):
