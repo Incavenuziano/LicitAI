@@ -1,7 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import { getStatsLicitacoesPorUf, StatsUF } from '@/services/api';
 
 export default function LicitacoesPorUfChart() {
@@ -20,34 +29,38 @@ export default function LicitacoesPorUfChart() {
   }, []);
 
   if (loading) {
-    return <div className="h-80 flex items-center justify-center">Carregando dados do gráfico...</div>;
+    return (
+      <div className="h-80 flex items-center justify-center">
+        Carregando dados do gráfico...
+      </div>
+    );
   }
 
   if (data.length === 0) {
-    return <div className="h-80 flex items-center justify-center">Não há dados para exibir.</div>;
+    return (
+      <div className="h-80 flex items-center justify-center">
+        Não há dados para exibir.
+      </div>
+    );
   }
 
   return (
     <div className="w-full h-80">
-        <h3 className="font-semibold mb-4">Licitações por Estado (Top 15)</h3>
-        <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-            data={data}
-            margin={{
-                top: 5,
-                right: 30,
-                left: 20,
-                bottom: 5,
-            }}
-            >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="uf" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="total" fill="#4f46e5" name="Total de Licitações" />
-            </BarChart>
-        </ResponsiveContainer>
+      <h3 className="font-semibold mb-4">Licitações por Estado (Top 15)</h3>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={data}
+          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="uf" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Bar dataKey="total" fill="#4f46e5" name="Total de Licitações" />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
+

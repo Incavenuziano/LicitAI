@@ -34,7 +34,6 @@ export default function DashboardPage() {
 
       {/* Seção de Gráficos e Acesso Rápido */}
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-5 gap-6">
-        
         {/* Coluna de Gráficos */}
         <div className="lg:col-span-3 bg-white p-6 rounded-lg shadow-lg">
           <LicitacoesPorUfChart />
@@ -54,8 +53,8 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
 }
+
