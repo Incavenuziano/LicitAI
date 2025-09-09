@@ -1,99 +1,28 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import func
 from . import models, schemas
 from passlib.context import CryptContext
 
-# Contexto para hashing de senhas
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ... (resto do arquivo até o final da seção de Licitação)
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def get_licitacoes(db: Session, skip: int = 0, limit: int = 100, q: str | None = None, uf: str | None = None):
+    query = db.query(models.Licitacao).options(selectinload(models.Licitacao.analises))
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    if q:
+        query = query.filter(models.Licitacao.objeto_compra.ilike(f"%{q}%"))
+    
+    if uf:
+        query = query.filter(models.Licitacao.uf == uf.upper())
 
-# --- CRUD para Usuário ---
+    return query.order_by(models.Licitacao.data_publicacao_pncp.desc()).offset(skip).limit(limit).all()
 
-def get_user_by_email(db: Session, email: str):
-    """Busca usuário por email, normalizando para lower-case."""
-    email_norm = (email or "").strip().lower()
-    return db.query(models.User).filter(models.User.email == email_norm).first()
+def get_licitacao_count_by_uf(db: Session):
+    """Conta o número de licitações por UF, retornando as que têm UF definida."""
+    return db.query(
+        models.Licitacao.uf,
+        func.count(models.Licitacao.id).label("total")
+    ).filter(models.Licitacao.uf != None).group_by(models.Licitacao.uf).order_by(func.count(models.Licitacao.id).desc()).all()
 
-def create_user(db: Session, user: schemas.UserCreate):
-    """Cria usuário salvando email em lower-case para evitar duplicidade por case."""
-    email_norm = (user.email or "").strip().lower()
-    hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=email_norm, hashed_password=hashed_password, nickname=user.nickname)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
-# --- CRUD para Licitação ---
-
-def create_licitacao(db: Session, licitacao: schemas.LicitacaoCreate) -> models.Licitacao:
-    db_licitacao = db.query(models.Licitacao).filter(models.Licitacao.numero_controle_pncp == licitacao.numero_controle_pncp).first()
-    if db_licitacao:
-        return db_licitacao
-    db_licitacao = models.Licitacao(**licitacao.dict())
-    db.add(db_licitacao)
-    db.commit()
-    db.refresh(db_licitacao)
-    return db_licitacao
-
-def get_licitacoes(db: Session, skip: int = 0):
-    return db.query(models.Licitacao).options(joinedload(models.Licitacao.analises)).offset(skip).all()
 
 # --- CRUD para Análise ---
-
-def get_analise(db: Session, analise_id: int):
-    """
-    Busca uma análise pelo seu ID, carregando a licitação associada.
-    """
-    return db.query(models.Analise).options(joinedload(models.Analise.licitacao)).filter(models.Analise.id == analise_id).first()
-
-def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
-    """
-    Cria um novo registro de análise para uma licitação com status 'Pendente'.
-    Se já existir uma análise para a licitação, a retorna.
-    """
-    db_analise = db.query(models.Analise).filter(models.Analise.licitacao_id == licitacao_id).first()
-    if db_analise:
-        # Se a análise já existe, talvez queira resetar o status para uma nova análise
-        db_analise.status = "Pendente"
-        db_analise.resultado = None
-        db.commit()
-        db.refresh(db_analise)
-        return db_analise
-
-    # Cria uma nova se não existir
-    db_analise = models.Analise(licitacao_id=licitacao_id, status="Pendente")
-    db.add(db_analise)
-    db.commit()
-    db.refresh(db_analise)
-    return db_analise
-
-def update_analise(db: Session, analise_id: int, status: str, resultado: str):
-    """
-    Atualiza o status e o resultado de uma análise.
-    """
-    db_analise = get_analise(db, analise_id=analise_id)
-    if db_analise:
-        db_analise.status = status
-        db_analise.resultado = resultado
-        db.commit()
-        db.refresh(db_analise)
-    return db_analise
-
-def search_licitacoes_by_objeto(db: Session, query: str, limit: int = 50):
-    """
-    Busca licitações cujo objeto de compra contenha a string de busca.
-    Usa ILIKE para busca case-insensitive.
-    """
-    return db.query(models.Licitacao).filter(models.Licitacao.objeto_compra.ilike(f"%{query}%")).limit(limit).all()
-
-def search_licitacoes_by_objeto(db: Session, query: str, limit: int = 50):
-    """
-    Busca licitações cujo objeto de compra contenha a string de busca.
-    Usa ILIKE para busca case-insensitive.
-    """
-    return db.query(models.Licitacao).filter(models.Licitacao.objeto_compra.ilike(f"%{query}%")).limit(limit).all()
+# ... (resto do arquivo)
