@@ -1,21 +1,12 @@
 import React from 'react';
+import { Inter } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'], weight: ['400','700'] });
 
 const LogoBranca = (props: React.HTMLAttributes<HTMLDivElement>) => {
   // Este código foi convertido do arquivo logo_branca.html
   return (
     <div {...props}>
-      <style>{`
-        .licit-a-i-bcdbfa1015cc .root-0-paragraph-set-0-paragraph-0-text-0 {
-          color: rgba(255, 255, 255, 1);
-          font-size: 106px;
-          font-family: "Inter";
-        }
-        .licit-a-i-bcdbfa1015cc .root-0-paragraph-set-0-paragraph-0-text-1 {
-          color: rgba(111, 210, 228, 1);
-          font-size: 106px;
-          font-family: "Inter";
-        }
-      `}</style>
       <div style={{ width: 309, height: 307, position: 'relative' }}>
         <svg width="267" height="190" viewBox="852 2092 267 190" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ position: 'absolute', left: 23, top: 0 }}>
           <path d="M1094.43603515625,2092L952.3919677734375,2236L877.6319580078125,2167L852,2192L952.3919677734375,2282L1119,2116L1094.43603515625,2092" fill="#ffffff"></path>
@@ -35,10 +26,10 @@ const LogoBranca = (props: React.HTMLAttributes<HTMLDivElement>) => {
         <svg width="25" height="46" viewBox="891 2237 25 46" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ position: 'absolute', left: 62, top: 145 }}>
           <path d="M891,2237L916,2262.27490234375L916,2283L891,2283L891,2237" fill="#6fd2e4"></path>
         </svg>
-        <div className="licit-a-i-bcdbfa1015cc" style={{ position: 'absolute', left: 0, top: 179, height: 128 }}>
+        <div style={{ position: 'absolute', left: 0, top: 179, height: 128 }}>
           <p style={{ margin: 0 }}>
-            <span className="root-0-paragraph-set-0-paragraph-0-text-0">Licit</span>
-            <span className="root-0-paragraph-set-0-paragraph-0-text-1">AI</span>
+            <span className={inter.className} style={{ color: 'rgba(255, 255, 255, 1)', fontSize: 106 }}>Licit</span>
+            <span className={inter.className} style={{ color: 'rgba(111, 210, 228, 1)', fontSize: 106 }}>AI</span>
           </p>
         </div>
       </div>

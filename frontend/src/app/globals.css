@@ -3,8 +3,4 @@
 @tailwind utilities;
 
 /* Configuração para usar a fonte Inter */
-@import url('https://rsms.me/inter/inter.css');
 
-html, body {
-  font-family: 'Inter', sans-serif;
-}

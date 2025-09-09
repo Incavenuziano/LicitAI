@@ -2,35 +2,57 @@ import { Licitacao } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-export const getLicitacoes = async (): Promise<Licitacao[]> => {
+export interface LicitacaoFilters {
+  q?: string;
+  uf?: string;
+  skip?: number;
+  limit?: number;
+}
+
+export const getLicitacoes = async (filters: LicitacaoFilters = {}): Promise<Licitacao[]> => {
   try {
-    const response = await fetch(`${API_URL}/licitacoes`);
-    if (!response.ok) {
-      throw new Error(`Erro na API: ${response.statusText}`);
-    }
-    const data: Licitacao[] = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Falha ao buscar licitações:", error);
+    const params = new URLSearchParams();
+    if (filters.q) params.append('q', filters.q);
+    if (filters.uf) params.append('uf', filters.uf);
+    if (typeof filters.skip === 'number') params.append('skip', String(filters.skip));
+    if (typeof filters.limit === 'number') params.append('limit', String(filters.limit));
+    const qs = params.toString();
+    const url = `${API_URL}/licitacoes${qs ? `?${qs}` : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Erro na API: ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? (data as Licitacao[]) : [];
+  } catch (e) {
+    console.error('Falha ao buscar licitações:', e);
     return [];
   }
 };
 
+export const getLicitacaoById = async (id: number): Promise<Licitacao | null> => {
+  try {
+    const res = await fetch(`${API_URL}/licitacoes/${id}`);
+    if (!res.ok) {
+      if (res.status === 404) return null;
+      throw new Error(`Erro na API: ${res.status}`);
+    }
+    return await res.json();
+  } catch (e) {
+    console.error('Falha ao buscar licitação:', e);
+    return null;
+  }
+};
+
 export const requestAnalises = async (licitacao_ids: number[]): Promise<any> => {
-  const response = await fetch(`${API_URL}/analises/`, {
+  const res = await fetch(`${API_URL}/analises/`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ licitacao_ids }),
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido ao solicitar análise' }));
-    throw new Error(errorData.detail);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || 'Falha ao solicitar análises');
   }
-
-  return response.json();
+  return res.json();
 };
 
 export interface BuscarLicitacoesPayload {
@@ -42,98 +64,61 @@ export interface BuscarLicitacoesPayload {
 }
 
 export const buscarLicitacoes = async (payload: BuscarLicitacoesPayload): Promise<any> => {
-  const response = await fetch(`${API_URL}/buscar_licitacoes`, {
+  const res = await fetch(`${API_URL}/buscar_licitacoes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido na busca' }));
-    throw new Error(errorData.detail || 'Erro ao buscar licitações');
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || 'Falha ao buscar licitações');
   }
-  return response.json();
+  return res.json();
 };
 
-// --- Agente: Preço vencedor de itens similares ---
-export type PrecoStats = {
-  count: number;
-  min: number | null;
-  max: number | null;
-  mean: number | null;
-  median: number | null;
+// RAG endpoints (podem retornar 404 se backend não expuser)
+export const ragIndexar = async (licitacaoId: number): Promise<{ indexed_chunks: number } | null> => {
+  try {
+    const res = await fetch(`${API_URL}/rag/indexar/${licitacaoId}`, { method: 'POST' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('ragIndexar failed', e);
+    return null;
+  }
 };
 
-export type PrecoDetalhe = { licitacao_id: number; preco: number };
-
-export type PrecoVencedorResponse = {
-  base: { id: number; numero_controle_pncp: string | null; objeto_compra: string | null };
-  similares_considerados: number;
-  precos_encontrados: number;
-  stats: PrecoStats;
-  detalhes: PrecoDetalhe[];
-};
-
-export const getPrecosVencedores = async (
+export const ragPerguntar = async (
   licitacaoId: number,
-  fonte: 'comprasgov' | 'pncp' | 'ambas' = 'comprasgov',
-  top_k: number = 20
-): Promise<PrecoVencedorResponse> => {
-  const url = new URL(`${API_URL}/agentes/preco_vencedor/${licitacaoId}`);
-  url.searchParams.set('top_k', String(top_k));
-  if (fonte) url.searchParams.set('fonte', fonte);
-  const res = await fetch(url.toString(), { cache: 'no-store' });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({} as any));
-    throw new Error(err.detail || 'Falha ao consultar preços vencedores');
-  }
-  return res.json();
-};
-
-
-// --- Pesquisa de Preços por Item ---
-export type PesquisaPrecoResponse = {
-  query: string;
-  fonte: string;
-  precos_encontrados: number;
-  stats: PrecoStats;
-  detalhes: { referencia_id: number | string; preco: number }[];
-};
-
-export const pesquisarPrecosPorItem = async (
-  descricao: string,
-  fonte: 'comprasgov' | 'pncp' | 'ambas' = 'comprasgov'
-): Promise<PesquisaPrecoResponse> => {
-  const url = new URL(`${API_URL}/pesquisa/precos_por_item`);
-  url.searchParams.set('descricao', descricao);
-  url.searchParams.set('fonte', fonte);
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({} as any));
-    throw new Error(err.detail || 'Falha ao pesquisar preços');
-  }
-  return res.json();
-};
-
-
-// --- RAG: Indexar e Perguntar ---
-export type RagResult = {
-  licitacao_id: number;
-  question: string;
-  results: { score: number; chunk: string }[];
-};
-
-export const ragIndexar = async (licitacaoId: number): Promise<{ licitacao_id: number; chunks_indexados: number }> => {
-  const res = await fetch(`${API_URL}/rag/indexar/${licitacaoId}`, { method: 'POST' });
-  if (!res.ok) throw new Error('Falha ao indexar edital');
-  return res.json();
-};
-
-export const ragPerguntar = async (licitacaoId: number, question: string, top_k: number = 4): Promise<RagResult> => {
+  question: string,
+  top_k: number = 4,
+): Promise<{ results: { score: number; chunk: string }[] }> => {
   const res = await fetch(`${API_URL}/rag/perguntar/${licitacaoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, top_k }),
   });
-  if (!res.ok) throw new Error('Falha ao consultar RAG');
+  if (!res.ok) {
+    return { results: [] };
+  }
   return res.json();
 };
+
+// Estatísticas (opcional)
+export interface StatsUF {
+  uf: string;
+  total: number;
+}
+
+export const getStatsLicitacoesPorUf = async (): Promise<StatsUF[]> => {
+  try {
+    const res = await fetch(`${API_URL}/stats/licitacoes-por-uf`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? (data as StatsUF[]) : [];
+  } catch (e) {
+    console.error('Falha ao buscar estatísticas por UF:', e);
+    return [];
+  }
+};
+

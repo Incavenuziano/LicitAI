@@ -2,6 +2,7 @@
 
 import StatCard from '@/components/StatCard';
 import { BriefcaseIcon, DollarSignIcon, MagnifyingGlassIcon } from '@/components/SidebarIcons';
+import LicitacoesPorUfChart from '@/components/charts/LicitacoesPorUfChart';
 
 // Conteúdo principal da página do Dashboard
 export default function DashboardPage() {
@@ -36,10 +37,7 @@ export default function DashboardPage() {
         
         {/* Coluna de Gráficos */}
         <div className="lg:col-span-3 bg-white p-6 rounded-lg shadow-lg">
-          <h2 className="text-xl font-bold text-gray-800 mb-4">Tendências</h2>
-          <div className="h-64 bg-gray-200 rounded-md flex items-center justify-center">
-            <p className="text-gray-500">(Gráfico de Licitações por Estado - Em breve)</p>
-          </div>
+          <LicitacoesPorUfChart />
         </div>
 
         {/* Coluna de Acesso Rápido */}

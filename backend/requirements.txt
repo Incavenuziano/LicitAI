@@ -9,3 +9,5 @@ pandas
 httpx
 python-dotenv
 google-generativeai
+playwright
+pdfminer.six

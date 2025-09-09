@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 
@@ -6,6 +7,8 @@ export const metadata: Metadata = {
   title: "LicitAI",
   description: "Plataforma de Licitações com IA",
 };
+
+const inter = Inter({ subsets: ["latin"], weight: ["400", "600", "700"] });
 
 export default function RootLayout({
   children,
@@ -17,7 +20,7 @@ export default function RootLayout({
       <head>
         <meta charSet="utf-8" />
       </head>
-      <body className="bg-gray-50">
+      <body className={`${inter.className} bg-gray-50`}>
         <Providers>{children}</Providers>
       </body>
     </html>

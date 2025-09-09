@@ -1,8 +1,7 @@
 import json
 from typing import Optional
-
 import httpx
-
+from charset_normalizer import from_bytes as cn_from_bytes
 
 def consultar_licitacoes_publicadas(
     codigo_modalidade: Optional[int] = 6,
@@ -14,14 +13,6 @@ def consultar_licitacoes_publicadas(
 ) -> str:
     """
     Consulta licitações publicadas no PNCP com filtros opcionais.
-
-    Parâmetros:
-      - codigo_modalidade: código da modalidade (ex.: 6 = Pregão Eletrônico)
-      - data_inicial, data_final: strings no formato YYYYMMDD
-      - uf: sigla da UF (se suportado pela API)
-      - pagina, tamanho_pagina: paginação
-
-    Retorna: JSON string com lista encontrada ou mensagem/erro.
     """
     base_url = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
 
@@ -42,7 +33,12 @@ def consultar_licitacoes_publicadas(
         print(f"--- Executando busca PNCP com parâmetros: {params} ---")
         response = httpx.get(base_url, params=params, timeout=45.0)
         response.raise_for_status()
-        payload = response.json()
+        
+        # Decodificação robusta para evitar problemas de encoding
+        raw_content = response.content
+        decoded_str = str(cn_from_bytes(raw_content).best())
+        payload = json.loads(decoded_str)
+
         print("--- Consulta ao PNCP bem-sucedida ---")
         if isinstance(payload, dict) and payload.get("data"):
             return json.dumps(payload["data"], indent=2, ensure_ascii=False)
@@ -70,4 +66,3 @@ if __name__ == "__main__":
         print(json.dumps(resultado_formatado, indent=2, ensure_ascii=False))
     except json.JSONDecodeError:
         print(resultado_json)
-

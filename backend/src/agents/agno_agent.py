@@ -99,7 +99,8 @@ def make_agent() -> Agent:
         )
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    model = Gemini(id="gemini-2.0-flash", api_key=api_key)
+    # Usa o modelo solicitado
+    model = Gemini(id="gemini-2.5-flash", api_key=api_key)
 
     # Storage e memoria persistente do agente
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -148,3 +149,51 @@ def run_agent(message: str, context: Optional[dict] = None) -> str:
     except Exception:
         return json.dumps({"result": response}, ensure_ascii=False)
 
+
+# Prompt base adaptado para análise de editais (Lei 14.133/21, TCU, etc.)
+BASE_PROMPT = (
+    "Instruções para o LLM\n"
+    "Você é um especialista em licitações públicas, com conhecimento aprofundado na Lei nº 14.133/2021,\n"
+    "nas orientações do Tribunal de Contas da União (TCU), e nas melhores práticas de planejamento,\n"
+    "instrução, julgamento e fiscalização de contratos administrativos.\n\n"
+    "Contexto da Análise:\n"
+    "Será analisada uma seção específica de um edital de licitação (ou o edital completo).\n"
+    "A sua tarefa é examinar o conteúdo apresentado e emitir uma avaliação técnico-jurídica com base na\n"
+    "conformidade legal, nos princípios constitucionais, nas boas práticas administrativas e nos\n"
+    "entendimentos do TCU.\n\n"
+    "Sua análise deve considerar os seguintes eixos normativos e operacionais:\n"
+    "I. Conformidade Legal (Lei nº 14.133/2021) – prazos, procedimentos, publicações, contraditório, ampla defesa, isonomia, interesse público.\n"
+    "II. Princípios Aplicáveis – legalidade, impessoalidade, moralidade, publicidade, eficiência, planejamento,\n"
+    "vinculação ao instrumento convocatório, julgamento objetivo, desenvolvimento nacional sustentável.\n"
+    "III. Check de Elementos Essenciais do Edital – objeto, fundamentos legais, critério de julgamento, habilitação,\n"
+    "cláusulas contratuais, condições de participação, cronograma, sanções, impugnação/recursos, PNCP.\n"
+    "IV. Riscos Jurídicos e Omissões – dispositivos omissos/ilegais, desproporcionalidade, hipóteses de impugnação.\n"
+    "V. Jurisprudência e Boas Práticas do TCU – entendimentos relevantes e recomendações.\n"
+    "VI. Recomendações Técnicas – melhorias para legalidade, economicidade, eficiência, transparência e segurança jurídica.\n\n"
+    "Formato de Resposta Esperado:\n"
+    "## [TÍTULO DA SEÇÃO ANALISADA]\n\n"
+    "### 1. Conformidade Legal\n[✔️ ou ⚠️] Análise com citação de artigos pertinentes da Lei nº 14.133/21.\n\n"
+    "### 2. Princípios da Administração Pública\n[✔️ ou ⚠️] Indicação dos princípios envolvidos e eventuais violações.\n\n"
+    "### 3. Checklist Técnico\n| Item | Avaliação | Observação técnica |\n|---|---|---|\n"
+    "| Objeto definido | ✔️/⚠️/❌ | … |\n| Fundamentação legal | ✔️/⚠️/❌ | … |\n| Critério de julgamento | ✔️/⚠️/❌ | … |\n| Requisitos de habilitação | ✔️/⚠️/❌ | … |\n| Cláusulas contratuais | ✔️/⚠️/❌ | … |\n| Condições de participação | ✔️/⚠️/❌ | … |\n| Cronograma | ✔️/⚠️/❌ | … |\n| Sanções administrativas | ✔️/⚠️/❌ | … |\n| Impugnação/recursos | ✔️/⚠️/❌ | … |\n| PNCP | ✔️/⚠️/❌ | … |\n\n"
+    "### 4. Riscos Jurídicos Identificados\n- …\n\n"
+    "### 5. Jurisprudência Aplicável\n> Cite entendimentos do TCU pertinentes.\n\n"
+    "### 6. Recomendações Técnicas\n- …\n\n"
+    "Observações Finais:\n"
+    "Seja técnico, claro e objetivo; cite artigos da Lei 14.133/21 quando aplicável; não faça suposições;\n"
+    "use marcadores (✔️, ⚠️, ❌) para indicar conformidade.\n"
+)
+
+
+def run_edital_analysis(texto: str, titulo_secao: Optional[str] = None, context: Optional[dict] = None) -> str:
+    """Executa a análise de um texto de edital usando o agente Agno (Gemini 2.5 Flash)."""
+    agent = make_agent()
+    if context:
+        agent.context = context
+    titulo = titulo_secao or "Seção do Edital"
+    prompt = f"{BASE_PROMPT}\n\n## {titulo}\n\n[TEXTO]\n{texto}\n\nProduza a análise conforme o formato esperado."
+    resp = agent.run(prompt)
+    try:
+        return str(resp)
+    except Exception:
+        return json.dumps({"result": resp}, ensure_ascii=False)

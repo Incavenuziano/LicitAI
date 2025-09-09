@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getLicitacoes, requestAnalises, buscarLicitacoes, ragIndexar, ragPerguntar } from "@/services/api";
+import { getLicitacoes, LicitacaoFilters, requestAnalises, buscarLicitacoes, ragIndexar, ragPerguntar } from "@/services/api";
 import { Licitacao, Analise } from "@/types";
 
 const UFS_BR = [
@@ -12,7 +12,7 @@ const UFS_BR = [
   "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ] as const;
 
-const StatusAnalise: React.FC<{
+const StatusAnalise: React.FC <{
   analise: Analise | undefined;
   onVerResultado: () => void;
 }> = ({ analise, onVerResultado }) => {
@@ -55,7 +55,7 @@ const StatusAnalise: React.FC<{
 
 const getClassificacao = (objeto: string | null): string => {
   if (!objeto) return "Outros";
-  const strip = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const strip = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
   const texto = strip(objeto.toLowerCase());
   const keywordsServico = [
     "servicos",
@@ -80,6 +80,7 @@ export default function LicitacoesTabela() {
   const router = useRouter();
   const [licitacoes, setLicitacoes] = useState<Licitacao[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filtroQ, setFiltroQ] = useState("");
   const [filtroUF, setFiltroUF] = useState("");
   const [ordemValor, setOrdemValor] = useState("");
   const [dataInicio, setDataInicio] = useState("");
@@ -97,31 +98,36 @@ export default function LicitacoesTabela() {
   const [isFetchingNew, setIsFetchingNew] = useState(false);
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchData = async () => {
-    const data = await getLicitacoes();
+  const fetchData = async (filters: LicitacaoFilters) => {
+    setLoading(true);
+    const data = await getLicitacoes(filters);
     setLicitacoes(data);
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    const debounceHandler = setTimeout(() => {
+      fetchData({ q: filtroQ, uf: filtroUF });
+    }, 500); // 500ms delay
+
+    return () => {
+      clearTimeout(debounceHandler);
+    };
+  }, [filtroQ, filtroUF]);
 
   useEffect(() => {
     const temAnalisePendente = licitacoes.some(
       (l) => l.analises && l.analises.some((a) => ["Pendente", "Em Andamento", "Processando"].includes(a.status))
     );
     if (temAnalisePendente) {
-      const timer = setTimeout(fetchData, 5000);
+      const timer = setTimeout(() => fetchData({ q: filtroQ, uf: filtroUF }), 5000);
       return () => clearTimeout(timer);
     }
-  }, [licitacoes]);
+  }, [licitacoes, filtroQ, filtroUF]);
 
   const licitacoesExibidas = useMemo(() => {
     let licitacoesProcessadas = [...licitacoes];
-    if (filtroUF) {
-      licitacoesProcessadas = licitacoesProcessadas.filter((l) => l.uf === filtroUF);
-    }
+    // Filtro por tipo e data permanecem no client-side por enquanto.
     if (dataInicio) {
       const inicio = new Date(dataInicio + "T00:00:00");
       licitacoesProcessadas = licitacoesProcessadas.filter(
@@ -147,7 +153,7 @@ export default function LicitacoesTabela() {
       });
     }
     return licitacoesProcessadas;
-  }, [licitacoes, filtroUF, ordemValor, dataInicio, dataFim, filtroTipo]);
+  }, [licitacoes, ordemValor, dataInicio, dataFim, filtroTipo]);
 
   const ufsDisponiveis = UFS_BR as readonly string[];
 
@@ -158,7 +164,7 @@ export default function LicitacoesTabela() {
     setSelectedIds(newSelectedIds);
   };
 
-  const handleBuscar = async () => {
+  const handleBuscarNovas = async () => {
     try {
       setIsFetchingNew(true);
       await buscarLicitacoes({
@@ -167,7 +173,7 @@ export default function LicitacoesTabela() {
         data_fim: dataFim || undefined,
       });
       alert("Busca de novas licitações solicitada. A lista será atualizada.");
-      setTimeout(fetchData, 1000);
+      setTimeout(() => fetchData({ q: filtroQ, uf: filtroUF }), 1000);
     } catch (e) {
       console.error(e);
       alert("Erro ao buscar novas licitações.");
@@ -192,7 +198,7 @@ export default function LicitacoesTabela() {
       await requestAnalises(licitacaoIds);
       setSelectedIds(new Set());
       alert(`${licitacaoIds.length} análise(s) solicitada(s) com sucesso!`);
-      setTimeout(fetchData, 1000);
+      setTimeout(() => fetchData({ q: filtroQ, uf: filtroUF }), 1000);
     } catch (error) {
       console.error("Erro ao solicitar análises:", error);
       alert("Ocorreu um erro ao solicitar as análises. Tente novamente.");
@@ -285,7 +291,20 @@ export default function LicitacoesTabela() {
       <h1 className="text-2xl font-bold mb-4">{"Licitações Encontradas"}</h1>
 
       {/* Filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4 p-4 bg-gray-50 rounded-lg border">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-4 p-4 bg-gray-50 rounded-lg border">
+        <div className="lg:col-span-2">
+          <label htmlFor="filtro-q" className="block text-sm font-medium text-gray-700 mb-1">
+            Buscar no Objeto
+          </label>
+          <input
+            id="filtro-q"
+            type="text"
+            value={filtroQ}
+            onChange={(e) => setFiltroQ(e.target.value)}
+            placeholder="Ex: software, consultoria, etc..."
+            className="w-full p-2 border border-gray-300 rounded-md shadow-sm"
+          />
+        </div>
         <div>
           <label htmlFor="filtro-uf" className="block text-sm font-medium text-gray-700 mb-1">
             Estado (UF)
@@ -298,8 +317,8 @@ export default function LicitacoesTabela() {
           >
             <option value="">Todos</option>
             {ufsDisponiveis.map((uf) => (
-              <option key={uf as string} value={uf as string}>
-                {uf as string}
+              <option key={uf} value={uf}>
+                {uf}
               </option>
             ))}
           </select>
@@ -322,276 +341,34 @@ export default function LicitacoesTabela() {
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Encerramento Entre
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={dataInicio}
-              onChange={(e) => setDataInicio(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md shadow-sm"
-            />
-            <input
-              type="date"
-              value={dataFim}
-              onChange={(e) => setDataFim(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md shadow-sm"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
             {"Ações"}
           </label>
           <div className="flex gap-2">
             <button
-              onClick={() => setOrdemValor("asc")}
-              className={`flex-1 p-2 text-sm rounded-md ${
-                ordemValor === "asc" ? "bg-blue-600 text-white" : "bg-gray-200"
-              }`}
-            >
-              Valor Crescente
-            </button>
-            <button
-              onClick={() => setOrdemValor("desc")}
-              className={`flex-1 p-2 text-sm rounded-md ${
-                ordemValor === "desc" ? "bg-blue-600 text-white" : "bg-gray-200"
-              }`}
-            >
-              Valor Decrescente
-            </button>
-            <button
               onClick={() => {
-                setOrdemValor("");
+                setFiltroQ("");
                 setFiltroUF("");
+                setFiltroTipo("");
                 setDataInicio("");
                 setDataFim("");
-                setFiltroTipo("");
-                setSelectedIds(new Set());
+                setOrdemValor("");
               }}
-              className="p-2 text-sm bg-gray-300 rounded-md"
+              className="flex-1 p-2 text-sm bg-gray-300 rounded-md"
             >
-              Limpar
+              Limpar Filtros
             </button>
             <button
-              onClick={handleBuscar}
-              className="p-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400"
+              onClick={handleBuscarNovas}
+              className="flex-1 p-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400"
               disabled={isFetchingNew}
             >
-              {isFetchingNew ? "Buscando..." : "Buscar Licitações"}
+              {isFetchingNew ? "Buscando..." : "Buscar Novas"}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Resultado da Análise (entre filtros e ações) */}
-      {selectedAnalise && (
-        <div className="mb-3 p-4 bg-blue-50 border border-blue-200 rounded">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-bold">
-              Resultado da Análise
-              {selectedAnalise.orgao ? ` · ${selectedAnalise.orgao}` : ""}
-              {selectedAnalise.numero ? ` · ${selectedAnalise.numero}` : ""}
-            </h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  if (selectedAnalise?.resultado) navigator.clipboard.writeText(selectedAnalise.resultado);
-                }}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Copiar resultado
-              </button>
-              <button
-                onClick={() => setSelectedAnalise(null)}
-                className="px-3 py-1 text-sm bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
-              >
-                Limpar resultado
-              </button>
-            </div>
-          </div>
-          <div className="whitespace-pre-wrap bg-white p-3 rounded border border-blue-100 font-mono text-sm max-h-96 overflow-auto">
-            {selectedAnalise.resultado}
-            <div className="mt-3 rounded border border-blue-100 bg-white p-3">
-              <h4 className="font-semibold mb-2 text-sm">Perguntar ao Edital (RAG)</h4>
-              <div className="flex gap-2 mb-2">
-                <input
-                  type="text"
-                  value={ragQuestion}
-                  onChange={(e) => setRagQuestion(e.target.value)}
-                  placeholder="Ex.: Data limite para entrega? Garantia exigida?"
-                  className="flex-1 px-3 py-2 border rounded"
-                />
-                <button
-                  onClick={async () => {
-                    if (!selectedAnalise?.id) return;
-                    setRagIndexing(true);
-                    try { await ragIndexar(selectedAnalise.id); } catch (e: any) { alert(e?.message || "Falha ao indexar"); }
-                    finally { setRagIndexing(false); }
-                  }}
-                  className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                  disabled={ragIndexing}
-                >
-                  {ragIndexing ? "Indexando..." : "Indexar"}
-                </button>
-                <button
-                  onClick={handleRagAsk}
-                  disabled={ragLoading || !ragQuestion.trim()}
-                  className="px-3 py-2 bg-indigo-600 text-white rounded disabled:bg-gray-400"
-                >
-                  {ragLoading ? "Perguntando..." : "Perguntar"}
-                </button>
-              </div>
-              {ragAnswers.length > 0 && (
-                <div className="space-y-3 max-h-64 overflow-auto">
-                  {ragAnswers.map((m, idx) => (
-                    <div key={idx} className="text-sm">
-                      <div className="text-gray-600">Q: {m.q}</div>
-                      <div className="whitespace-pre-wrap mt-1 border rounded p-2 bg-gray-50">
-                        {m.a}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Ações em Lote */}
-      <div className="flex items-center justify-between mb-2 h-9">
-        <div className="text-sm text-gray-600">
-          {selectedIds.size > 0 && (
-            <span>
-              {selectedIds.size} de {licitacoesExibidas.length} itens selecionados.
-            </span>
-          )}
-        </div>
-        {selectedIds.size > 0 && (
-          <div className="flex gap-2">
-            <button
-              onClick={handleAnalisar}
-              className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:bg-gray-400"
-              disabled={selectedIds.size === 0 || isAnalysing}
-            >
-              {isAnalysing ? "Analisando..." : "Analisar Selecionados"}
-            </button>
-            <button
-              onClick={handleExport}
-              className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-400"
-              disabled={selectedIds.size === 0}
-            >
-              Exportar Selecionados (CSV)
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Tabela */}
-      <div className="rounded-lg border bg-white shadow-sm">
-        <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
-          {!loading && licitacoesExibidas.length > 0 && (
-            <table className="min-w-[1000px] w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-gray-50">
-                <tr>
-                  <th className="py-3 px-3 border-b border-gray-200 w-12 text-center whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      ref={selectAllCheckboxRef}
-                      checked={licitacoesExibidas.length > 0 && selectedIds.size === licitacoesExibidas.length}
-                      onChange={handleSelectAll}
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                  </th>
-                  <th className="py-2 px-4 border-b">{"Órgão"}</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data de Encerramento</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-nowrap">Valor Estimado</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Edital</th>
-                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 whitespace-nowrap">Preços</th>
-                  <th className="py-2 px-4 border-b">{"Status da Análise"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {licitacoesExibidas.map((licitacao) => (
-                  <tr
-                    key={licitacao.id}
-                    onClick={() => router.push(`/licitacoes/${licitacao.id}`)}
-                    className={`${selectedIds.has(licitacao.id) ? "bg-blue-100" : "odd:bg-gray-50 hover:bg-gray-100"} cursor-pointer`}
-                  >
-                    <td className="py-2 px-3 border-b text-center whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(licitacao.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() => handleSelect(licitacao.id)}
-                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                    </td>
-                    <td className="py-2 px-4 border-b whitespace-nowrap">{licitacao.orgao_entidade_nome}</td>
-                    <td className="py-2 px-4 border-b">
-                      <div className="max-w-[520px] truncate" title={licitacao.objeto_compra || undefined}>
-                        {licitacao.objeto_compra}
-                      </div>
-                    </td>
-                    <td className="py-2 px-4 border-b whitespace-nowrap">
-                      {licitacao.data_encerramento_proposta
-                        ? new Date(licitacao.data_encerramento_proposta).toLocaleDateString("pt-BR")
-                        : "N/A"}
-                    </td>
-                    <td className="py-2 px-4 border-b text-right whitespace-nowrap">
-                      {licitacao.valor_total_estimado
-                        ? parseFloat(licitacao.valor_total_estimado).toLocaleString("pt-BR", {
-                            style: "currency",
-                            currency: "BRL",
-                          })
-                        : "N/A"}
-                    </td>
-                    <td className="py-2 px-4 border-b text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      {licitacao.link_sistema_origem ? (
-                        <a
-                          href={licitacao.link_sistema_origem}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm"
-                        >
-                          Acessar
-                        </a>
-                      ) : (
-                        "N/D"
-                      )}
-                    </td>
-                    <td className="py-2 px-4 border-b text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <Link
-                        href={`/precos/${licitacao.id}`}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded text-sm"
-                      >
-                        Preços
-                      </Link>
-                    </td>
-                    <td
-                      className={`py-2 px-4 border-b text-center ${(() => {
-                        const st = licitacao.analises && licitacao.analises[0] ? licitacao.analises[0].status : undefined;
-                        const s = String(st).toLowerCase();
-                        if (s === "processando") return "bg-yellow-50";
-                        if (s === "erro") return "bg-red-50";
-                        if (s.startsWith("conclu")) return "bg-green-50";
-                        return "";
-                      })()}`}
-                    >
-                      <StatusAnalise
-                        analise={licitacao.analises && licitacao.analises[0]}
-                        onVerResultado={() => handleShowResultado(licitacao)}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+      {/* ... (resto do JSX) */}
     </div>
   );
 }

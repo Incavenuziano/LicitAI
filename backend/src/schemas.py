@@ -90,3 +90,9 @@ class BuscaLicitacoesRequest(BaseModel):
     uf: Optional[str] = None
     codigo_modalidade: Optional[int] = 6
     tamanho_pagina: Optional[int] = 10
+
+# --- Esquemas para Estatísticas ---
+
+class StatsUF(BaseModel):
+    uf: str
+    total: int

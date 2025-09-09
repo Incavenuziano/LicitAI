@@ -51,3 +51,21 @@ class EditalEmbedding(Base):
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     embedding = Column(Text, nullable=False)  # JSON com a lista de floats
+
+
+class Anexo(Base):
+    __tablename__ = 'anexos'
+    id = Column(Integer, primary_key=True, index=True)
+    licitacao_id = Column(Integer, ForeignKey('licitacoes.id'), index=True, nullable=True)
+    source = Column(String, nullable=False)  # pncp_docs | pncp_html | playwright | direct
+    url = Column(Text, nullable=True)
+    filename = Column(String, nullable=True)
+    local_path = Column(Text, nullable=True)
+    content_type = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    sha256 = Column(String, index=True, nullable=True)
+    score = Column(Integer, nullable=True)
+    status = Column(String, nullable=False, default='saved')  # saved | processed | failed
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
