@@ -3,6 +3,7 @@
 import StatCard from '@/components/StatCard';
 import { BriefcaseIcon, DollarSignIcon, MagnifyingGlassIcon } from '@/components/SidebarIcons';
 import LicitacoesPorUfChart from '@/components/charts/LicitacoesPorUfChart';
+import LicitacoesPorUfPie from '@/components/charts/LicitacoesPorUfPie';
 
 // Conteúdo principal da página do Dashboard
 export default function DashboardPage() {
@@ -35,8 +36,13 @@ export default function DashboardPage() {
       {/* Seção de Gráficos e Acesso Rápido */}
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Coluna de Gráficos */}
-        <div className="lg:col-span-3 bg-white p-6 rounded-lg shadow-lg">
-          <LicitacoesPorUfChart />
+        <div className="lg:col-span-3 space-y-6">
+          <div className="bg-white p-6 rounded-lg shadow-lg">
+            <LicitacoesPorUfChart />
+          </div>
+          <div className="bg-white p-6 rounded-lg shadow-lg">
+            <LicitacoesPorUfPie />
+          </div>
         </div>
 
         {/* Coluna de Acesso Rápido */}
@@ -57,4 +63,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
