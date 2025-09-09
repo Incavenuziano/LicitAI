@@ -102,8 +102,8 @@ def upload_edital(
     objeto_compra: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    uploads_dir = Path(__file__).resolve().parent / ".." / "backend" / "tmp" / "uploads"
-    uploads_dir = uploads_dir.resolve()
+    # Armazena os uploads dentro do diretório da aplicação (/app/tmp/uploads)
+    uploads_dir = Path(__file__).resolve().parent / "tmp" / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
     # Lê e salva arquivo, computa metadados

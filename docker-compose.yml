@@ -1,8 +1,6 @@
-# Arquivo de configuração para rodar nossos serviços com Docker
 version: '3.8'
 
 services:
-  # Serviço do nosso banco de dados PostgreSQL
   db:
     image: postgres:15-alpine
     container_name: licitai_db
@@ -15,6 +13,24 @@ services:
       - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  # NOVO SERVIÇO PARA O BACKEND
+  backend:
+    build: ./backend  # Constrói a imagem a partir do Dockerfile na pasta ./backend
+    container_name: licitai_backend
+    restart: always
+    ports:
+      - "8000:8000"   # Mapeia a porta 8000 do PC para a porta 8000 do contêiner
+    volumes:
+      - ./backend:/app # Espelha o código local para dentro do contêiner para desenvolvimento
+    depends_on:
+      - db            # Garante que o banco de dados inicie ANTES do backend
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=licitai
+      - POSTGRES_USER=licitai_user
+      - POSTGRES_PASSWORD=licitai_password
 
 volumes:
   postgres_data:
