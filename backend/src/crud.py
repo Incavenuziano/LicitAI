@@ -62,6 +62,26 @@ def get_licitacao_count_by_uf(db: Session):
 
 
 # --- Análises ---
+def create_licitacao_manual(
+    db: Session,
+    numero_controle_pncp: str,
+    *,
+    objeto_compra: str | None = None,
+    orgao_entidade_nome: str | None = None,
+    link_sistema_origem: str | None = None,
+) -> models.Licitacao:
+    lic = models.Licitacao(
+        numero_controle_pncp=numero_controle_pncp,
+        objeto_compra=objeto_compra,
+        orgao_entidade_nome=orgao_entidade_nome,
+        link_sistema_origem=link_sistema_origem,
+    )
+    db.add(lic)
+    db.commit()
+    db.refresh(lic)
+    return lic
+
+
 def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
     lic = get_licitacao(db, licitacao_id)
     if lic is None:
@@ -98,4 +118,3 @@ def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: 
     db.commit()
     db.refresh(analise)
     return analise
-

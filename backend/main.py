@@ -4,6 +4,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+from fastapi import UploadFile, File, Form
+from pathlib import Path
+import time
 
 from src import crud, models, schemas, analysis_service
 from src.database import get_db, engine
@@ -87,3 +90,43 @@ def request_analise_de_licitacoes(request: AnaliseRequest, background_tasks: Bac
 @app.get("/")
 def read_root():
     return {"message": "API LicitAI online"}
+
+
+# Upload de edital manual
+@app.post("/upload/edital/")
+def upload_edital(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    orgao_entidade_nome: Optional[str] = Form(None),
+    objeto_compra: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    uploads_dir = Path(__file__).resolve().parent / ".." / "backend" / "tmp" / "uploads"
+    uploads_dir = uploads_dir.resolve()
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Salva arquivo
+    ts = int(time.time())
+    original = (file.filename or 'arquivo').replace(" ", "_")
+    safe_name = f"edital_{ts}_{original}"
+    dest = uploads_dir / safe_name
+    with dest.open("wb") as f:
+        f.write(file.file.read())
+
+    # Cria licitação mínima para referenciar a análise
+    numero = f"MANUAL-{ts}"
+    lic = crud.create_licitacao_manual(
+        db,
+        numero_controle_pncp=numero,
+        objeto_compra=objeto_compra or "Upload manual de edital",
+        orgao_entidade_nome=orgao_entidade_nome,
+    )
+
+    analise = crud.create_licitacao_analise(db, licitacao_id=lic.id)
+
+    # Agenda processamento com o arquivo local
+    background_tasks.add_task(
+        analysis_service.run_analysis_from_file, analise_id=analise.id, file_path=str(dest)
+    )
+
+    return {"filename": safe_name, "analise_id": analise.id, "licitacao_id": lic.id}

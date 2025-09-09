@@ -235,3 +235,47 @@ def run_analysis(analise_id: int) -> None:
           pass
     finally:
       db.close()
+
+
+def run_analysis_from_file(analise_id: int, file_path: str) -> None:
+    """Processa análise usando um arquivo local (PDF/Imagem/HTML).
+
+    Útil para uploads manuais de edital. Extrai texto do arquivo e cria
+    um resumo simples, salvando o resultado na análise.
+    """
+    db: Session = SessionLocal()
+    try:
+        analise = crud.get_analise(db, analise_id)
+        if not analise:
+            return
+        crud.update_analise_status(db, analise_id, "Processando")
+
+        texto: str = ""
+        try:
+            p = Path(file_path)
+            data = p.read_bytes()
+            ctype = "application/pdf" if p.suffix.lower() == ".pdf" else "application/octet-stream"
+            extracted = _extract_text_from_pdf(data) if ctype == "application/pdf" else None
+            if not extracted:
+                # fallback para OCR limitado
+                ocr = _ocr_pdf2(data)
+                if ocr:
+                    extracted = ocr
+            texto = extracted or ""
+        except Exception:
+            texto = ""
+
+        if not texto:
+            resultado = "Não foi possível extrair texto do arquivo enviado."
+        else:
+            resumo, _ = _analisar_texto_edital_enriquecida(texto)
+            resultado = resumo
+
+        crud.set_analise_resultado(db, analise_id, resultado)
+    except Exception:
+        try:
+            crud.update_analise_status(db, analise_id, "Erro")
+        except Exception:
+            pass
+    finally:
+        db.close()
