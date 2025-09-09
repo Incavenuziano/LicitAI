@@ -56,6 +56,21 @@ def read_licitacao(licitacao_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Licitacao nao encontrada")
     return db_licitacao
 
+# Estatísticas
+@app.get("/stats/licitacoes-por-uf", response_model=list[schemas.StatsUF])
+def stats_licitacoes_por_uf(db: Session = Depends(get_db)):
+    rows = crud.get_licitacao_count_by_uf(db)
+    # rows são tuplas (uf, total) ou objetos com atributos; normalizar saída
+    result: list[schemas.StatsUF] = []
+    for r in rows:
+        try:
+            uf = r.uf  # type: ignore[attr-defined]
+            total = int(r.total)  # type: ignore[attr-defined]
+        except Exception:
+            uf, total = r[0], int(r[1])  # fallback se vier como tupla
+        result.append(schemas.StatsUF(uf=uf, total=total))
+    return result
+
 # Analises
 class AnaliseRequest(BaseModel):
     licitacao_ids: List[int]

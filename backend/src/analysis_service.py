@@ -191,3 +191,47 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
 
 
 
+def run_analysis(analise_id: int) -> None:
+    """Processa uma análise de licitação de forma simplificada.
+
+    Atualiza status para 'Processando', gera um resumo básico a partir
+    dos campos da licitação (quando disponível) e finaliza como 'Concluído'.
+    """
+    db: Session = SessionLocal()
+    try:
+      analise = crud.get_analise(db, analise_id)
+      if not analise:
+          return
+      crud.update_analise_status(db, analise_id, "Processando")
+
+      lic = crud.get_licitacao(db, analise.licitacao_id)
+      if lic is None:
+          resultado = "Não foi possível localizar a licitação relacionada."
+      else:
+          partes = [
+              "Resumo automático da licitação:",
+              f"Órgão: {lic.orgao_entidade_nome or 'N/D'}",
+              f"Objeto: {lic.objeto_compra or 'N/D'}",
+              f"UF/Município: {lic.uf or 'N/D'} / {lic.municipio_nome or 'N/D'}",
+              f"Publicação: {lic.data_publicacao_pncp or 'N/D'}",
+              f"Encerramento: {lic.data_encerramento_proposta or 'N/D'}",
+              f"Valor estimado: {lic.valor_total_estimado or 'N/D'}",
+          ]
+          # Se houver link, tenta extrair texto e incluir amostra
+          resumo_extra = ""
+          if lic.link_sistema_origem:
+              txt, meta = extract_text_from_link(lic.link_sistema_origem)
+              if txt:
+                  txt_preview = (txt[:800] + "...") if len(txt) > 800 else txt
+                  resumo_extra = "\n\nAmostra do edital (texto extraído):\n" + txt_preview
+          resultado = "\n".join(partes) + resumo_extra
+
+      crud.set_analise_resultado(db, analise_id, resultado)
+    except Exception:
+      # Em caso de erro, marca como 'Erro' com breve mensagem
+      try:
+          crud.update_analise_status(db, analise_id, "Erro")
+      except Exception:
+          pass
+    finally:
+      db.close()
