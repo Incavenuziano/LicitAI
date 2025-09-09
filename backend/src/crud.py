@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
 from . import models, schemas
 from passlib.context import CryptContext
+from datetime import datetime
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -69,17 +70,59 @@ def create_licitacao_manual(
     objeto_compra: str | None = None,
     orgao_entidade_nome: str | None = None,
     link_sistema_origem: str | None = None,
+    uf: str | None = None,
+    municipio_nome: str | None = None,
+    data_publicacao_pncp: datetime | None = None,
+    data_encerramento_proposta: datetime | None = None,
 ) -> models.Licitacao:
     lic = models.Licitacao(
         numero_controle_pncp=numero_controle_pncp,
         objeto_compra=objeto_compra,
         orgao_entidade_nome=orgao_entidade_nome,
         link_sistema_origem=link_sistema_origem,
+        uf=(uf.upper() if uf else None),
+        municipio_nome=municipio_nome,
+        data_publicacao_pncp=data_publicacao_pncp or datetime.utcnow(),
+        data_encerramento_proposta=data_encerramento_proposta,
     )
     db.add(lic)
     db.commit()
     db.refresh(lic)
     return lic
+
+
+def create_anexo(
+    db: Session,
+    *,
+    licitacao_id: int | None,
+    source: str,
+    filename: str | None = None,
+    local_path: str | None = None,
+    url: str | None = None,
+    content_type: str | None = None,
+    size_bytes: int | None = None,
+    sha256: str | None = None,
+    score: int | None = None,
+    status: str = "saved",
+    error: str | None = None,
+) -> models.Anexo:
+    an = models.Anexo(
+        licitacao_id=licitacao_id,
+        source=source,
+        url=url,
+        filename=filename,
+        local_path=local_path,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        score=score,
+        status=status,
+        error=error,
+    )
+    db.add(an)
+    db.commit()
+    db.refresh(an)
+    return an
 
 
 def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:

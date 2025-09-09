@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from fastapi import UploadFile, File, Form
 from pathlib import Path
 import time
+import hashlib
 
 from src import crud, models, schemas, analysis_service
 from src.database import get_db, engine
@@ -105,13 +106,17 @@ def upload_edital(
     uploads_dir = uploads_dir.resolve()
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    # Salva arquivo
+    # Lê e salva arquivo, computa metadados
     ts = int(time.time())
     original = (file.filename or 'arquivo').replace(" ", "_")
     safe_name = f"edital_{ts}_{original}"
     dest = uploads_dir / safe_name
+    data = file.file.read()
     with dest.open("wb") as f:
-        f.write(file.file.read())
+        f.write(data)
+    size_bytes = len(data)
+    sha256 = hashlib.sha256(data).hexdigest()
+    content_type = file.content_type or 'application/octet-stream'
 
     # Cria licitação mínima para referenciar a análise
     numero = f"MANUAL-{ts}"
@@ -124,9 +129,30 @@ def upload_edital(
 
     analise = crud.create_licitacao_analise(db, licitacao_id=lic.id)
 
+    # Registra anexo associado
+    anexo = crud.create_anexo(
+        db,
+        licitacao_id=lic.id,
+        source='direct',
+        filename=original,
+        local_path=str(dest),
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        status='saved',
+    )
+
     # Agenda processamento com o arquivo local
     background_tasks.add_task(
         analysis_service.run_analysis_from_file, analise_id=analise.id, file_path=str(dest)
     )
 
-    return {"filename": safe_name, "analise_id": analise.id, "licitacao_id": lic.id}
+    return {
+        "filename": safe_name,
+        "content_type": content_type,
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+        "analise_id": analise.id,
+        "licitacao_id": lic.id,
+        "anexo_id": anexo.id,
+    }
