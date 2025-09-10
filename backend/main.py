@@ -18,6 +18,8 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
+logger = logging.getLogger("api")
+
 # CORS
 origins = [
     "http://localhost:3000",
@@ -157,8 +159,6 @@ def upload_edital(
         "filename": safe_name,
         "content_type": content_type,
         "size_bytes": size_bytes,
-logger = logging.getLogger("api")
-
         "sha256": sha256,
         "analise_id": analise.id,
         "licitacao_id": lic.id,
