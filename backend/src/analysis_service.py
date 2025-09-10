@@ -1,41 +1,20 @@
-import time
 import traceback
-import re
-import os
-import shutil
-import subprocess
-import hashlib
 from pathlib import Path
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any
-import json
-import unicodedata
-from urllib.parse import urljoin
 
 from sqlalchemy.orm import Session
 from .database import SessionLocal
 from . import crud
-from .agents.agente_analise import analisar_licitacoes_com_pandas
-try:
-    from .agents.agno_agent import run_edital_analysis  # type: ignore
-except Exception:
-    run_edital_analysis = None  # type: ignore
-from .integrations.pncp import (
-    pncp_buscar_por_link,
-    pncp_buscar_por_link_expanded,
-    pncp_buscar_por_numero_compra_expanded,
-    listar_documentos_compra,
-    baixar_documento_por_sequencial,
-)
-from .integrations.cnpj_resolver import resolve_cnpj_by_name_via_pncp, resolve_cnpj_by_name_via_google
-from . import crud as crud_mod
-from .integrations.anexos import pncp_extrair_anexos_de_pagina
-from .embeddings_service import index_licitacao
+import logging
+
+logger = logging.getLogger("analysis")
 
 try:
     import requests  # type: ignore
 except Exception:
     requests = None  # type: ignore
+
 try:
     import pdfplumber  # type: ignore
 except Exception:
@@ -96,10 +75,6 @@ def _extract_text_from_pdf(data: bytes) -> Optional[str]:
     return None
 
 
-def _extract_items_from_pdf_bytes(data: bytes) -> list[Dict[str, Any]]:
-    return []
-
-
 def _ocr_pdf2(data: bytes, lang_default: str = "por") -> Optional[str]:
     if convert_from_bytes is None or pytesseract is None:
         return None
@@ -115,16 +90,6 @@ def _ocr_pdf2(data: bytes, lang_default: str = "por") -> Optional[str]:
                 continue
         combined = "\n".join(texts).strip()
         return combined or None
-    except Exception:
-        return None
-
-
-def _ocr_image(data: bytes, lang_default: str = "por") -> Optional[str]:
-    if pytesseract is None or Image is None:
-        return None
-    try:
-        img = Image.open(BytesIO(data))
-        return pytesseract.image_to_string(img, lang=lang_default)
     except Exception:
         return None
 
@@ -171,7 +136,8 @@ def extract_text_from_link(link: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]:
-    lower = texto.lower()
+    import re
+
     valores = re.findall(r"R\$\s?[\d\.]{1,12},\d{2}", texto)
     datas = re.findall(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b", texto)
     resumo = [
@@ -186,67 +152,59 @@ def _analisar_texto_edital_enriquecida(texto: str) -> Tuple[str, Dict[str, Any]]
     }
     return "\n".join(resumo), dados
 
-# --- FIM helpers adicionados ---
-
-
-
 
 def run_analysis(analise_id: int) -> None:
-    """Processa uma análise de licitação de forma simplificada.
-
-    Atualiza status para 'Processando', gera um resumo básico a partir
-    dos campos da licitação (quando disponível) e finaliza como 'Concluído'.
-    """
+    """Processa uma análise de licitação (simplificado)."""
     db: Session = SessionLocal()
     try:
-      analise = crud.get_analise(db, analise_id)
-      if not analise:
-          return
-      crud.update_analise_status(db, analise_id, "Processando")
+        logger.info(f"[run_analysis] start analise_id={analise_id}")
+        analise = crud.get_analise(db, analise_id)
+        if not analise:
+            logger.warning(f"[run_analysis] analise_id={analise_id} não encontrada")
+            return
+        crud.update_analise_status(db, analise_id, "Processando")
 
-      lic = crud.get_licitacao(db, analise.licitacao_id)
-      if lic is None:
-          resultado = "Não foi possível localizar a licitação relacionada."
-      else:
-          partes = [
-              "Resumo automático da licitação:",
-              f"Órgão: {lic.orgao_entidade_nome or 'N/D'}",
-              f"Objeto: {lic.objeto_compra or 'N/D'}",
-              f"UF/Município: {lic.uf or 'N/D'} / {lic.municipio_nome or 'N/D'}",
-              f"Publicação: {lic.data_publicacao_pncp or 'N/D'}",
-              f"Encerramento: {lic.data_encerramento_proposta or 'N/D'}",
-              f"Valor estimado: {lic.valor_total_estimado or 'N/D'}",
-          ]
-          # Se houver link, tenta extrair texto e incluir amostra
-          resumo_extra = ""
-          if lic.link_sistema_origem:
-              txt, meta = extract_text_from_link(lic.link_sistema_origem)
-              if txt:
-                  txt_preview = (txt[:800] + "...") if len(txt) > 800 else txt
-                  resumo_extra = "\n\nAmostra do edital (texto extraído):\n" + txt_preview
-          resultado = "\n".join(partes) + resumo_extra
+        lic = crud.get_licitacao(db, analise.licitacao_id)
+        if lic is None:
+            resultado = "Não foi possível localizar a licitação relacionada."
+        else:
+            partes = [
+                "Resumo automático da licitação:",
+                f"Órgão: {lic.orgao_entidade_nome or 'N/D'}",
+                f"Objeto: {lic.objeto_compra or 'N/D'}",
+                f"UF/Município: {lic.uf or 'N/D'} / {lic.municipio_nome or 'N/D'}",
+                f"Publicação: {lic.data_publicacao_pncp or 'N/D'}",
+                f"Encerramento: {lic.data_encerramento_proposta or 'N/D'}",
+                f"Valor estimado: {lic.valor_total_estimado or 'N/D'}",
+            ]
+            resumo_extra = ""
+            if getattr(lic, "link_sistema_origem", None):
+                txt, _ = extract_text_from_link(lic.link_sistema_origem)  # type: ignore[arg-type]
+                if txt:
+                    txt_preview = (txt[:800] + "...") if len(txt) > 800 else txt
+                    resumo_extra = "\n\nAmostra do edital (texto extraído):\n" + txt_preview
+            resultado = "\n".join(partes) + resumo_extra
 
-      crud.set_analise_resultado(db, analise_id, resultado)
+        crud.set_analise_resultado(db, analise_id, resultado)
+        logger.info(f"[run_analysis] done analise_id={analise_id} status=Concluído")
     except Exception:
-      # Em caso de erro, marca como 'Erro' com breve mensagem
-      try:
-          crud.update_analise_status(db, analise_id, "Erro")
-      except Exception:
-          pass
+        logger.exception(f"[run_analysis] failed analise_id={analise_id}")
+        try:
+            crud.update_analise_status(db, analise_id, "Erro")
+        except Exception:
+            pass
     finally:
-      db.close()
+        db.close()
 
 
 def run_analysis_from_file(analise_id: int, file_path: str) -> None:
-    """Processa análise usando um arquivo local (PDF/Imagem/HTML).
-
-    Útil para uploads manuais de edital. Extrai texto do arquivo e cria
-    um resumo simples, salvando o resultado na análise.
-    """
+    """Processa análise usando um arquivo local (PDF/Imagem/HTML)."""
     db: Session = SessionLocal()
     try:
+        logger.info(f"[run_analysis_from_file] start analise_id={analise_id} file_path={file_path}")
         analise = crud.get_analise(db, analise_id)
         if not analise:
+            logger.warning(f"[run_analysis_from_file] analise_id={analise_id} não encontrada")
             return
         crud.update_analise_status(db, analise_id, "Processando")
 
@@ -257,7 +215,6 @@ def run_analysis_from_file(analise_id: int, file_path: str) -> None:
             ctype = "application/pdf" if p.suffix.lower() == ".pdf" else "application/octet-stream"
             extracted = _extract_text_from_pdf(data) if ctype == "application/pdf" else None
             if not extracted:
-                # fallback para OCR limitado
                 ocr = _ocr_pdf2(data)
                 if ocr:
                     extracted = ocr
@@ -272,7 +229,9 @@ def run_analysis_from_file(analise_id: int, file_path: str) -> None:
             resultado = resumo
 
         crud.set_analise_resultado(db, analise_id, resultado)
+        logger.info(f"[run_analysis_from_file] done analise_id={analise_id} status=Concluído")
     except Exception:
+        logger.exception(f"[run_analysis_from_file] failed analise_id={analise_id}")
         try:
             crud.update_analise_status(db, analise_id, "Erro")
         except Exception:
