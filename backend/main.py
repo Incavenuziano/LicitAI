@@ -8,6 +8,7 @@ from fastapi import UploadFile, File, Form
 from pathlib import Path
 import time
 import hashlib
+import logging
 
 from src import crud, models, schemas, analysis_service
 from src.database import get_db, engine
@@ -81,11 +82,14 @@ class AnaliseRequest(BaseModel):
 
 @app.post("/analises/", status_code=status.HTTP_202_ACCEPTED)
 def request_analise_de_licitacoes(request: AnaliseRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    logger.info(f"[analises] solicitacao recebida para {len(request.licitacao_ids)} licitacao(oes)")
     created = []
     for licitacao_id in request.licitacao_ids:
         db_analise = crud.create_licitacao_analise(db=db, licitacao_id=licitacao_id)
+        logger.info(f"[analises] analise criada id={db_analise.id} licitacao_id={licitacao_id}; agendando background task")
         background_tasks.add_task(analysis_service.run_analysis, analise_id=db_analise.id)
         created.append(db_analise)
+    logger.info(f"[analises] agendamento concluido para {len(created)} analise(s)")
     return {"message": f"Analises iniciadas: {len(created)}", "analises": created}
 
 @app.get("/")
@@ -127,6 +131,7 @@ def upload_edital(
         orgao_entidade_nome=orgao_entidade_nome,
     )
 
+    logger.info(f"[upload] arquivo salvo em {dest} (sha256={sha256}, size={size_bytes}); licitacao criada id={lic.id}")
     analise = crud.create_licitacao_analise(db, licitacao_id=lic.id)
 
     # Registra anexo associado
@@ -143,6 +148,7 @@ def upload_edital(
     )
 
     # Agenda processamento com o arquivo local
+    logger.info(f"[upload] analise criada id={analise.id}; anexo id={anexo.id}; agendando background task para processamento do arquivo")
     background_tasks.add_task(
         analysis_service.run_analysis_from_file, analise_id=analise.id, file_path=str(dest)
     )
@@ -151,6 +157,8 @@ def upload_edital(
         "filename": safe_name,
         "content_type": content_type,
         "size_bytes": size_bytes,
+logger = logging.getLogger("api")
+
         "sha256": sha256,
         "analise_id": analise.id,
         "licitacao_id": lic.id,

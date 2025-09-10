@@ -3,6 +3,9 @@ from sqlalchemy import func
 from . import models, schemas
 from passlib.context import CryptContext
 from datetime import datetime
+import logging
+
+logger = logging.getLogger("crud")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -14,7 +17,11 @@ def get_user_by_email(db: Session, email: str) -> models.User | None:
 
 def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     hashed = pwd_context.hash(user.password)
-    db_user = models.User(email=user.email.lower().strip(), hashed_password=hashed, nickname=user.nickname)
+    db_user = models.User(
+        email=user.email.lower().strip(),
+        hashed_password=hashed,
+        nickname=user.nickname,
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -37,9 +44,7 @@ def get_licitacoes(
         query = query.filter(models.Licitacao.objeto_compra.ilike(f"%{q}%"))
     if uf:
         query = query.filter(models.Licitacao.uf == uf.upper())
-    return (
-        query.order_by(models.Licitacao.data_publicacao_pncp.desc()).offset(skip).limit(limit).all()
-    )
+    return query.order_by(models.Licitacao.data_publicacao_pncp.desc()).offset(skip).limit(limit).all()
 
 
 def get_licitacao(db: Session, licitacao_id: int) -> models.Licitacao | None:
@@ -62,7 +67,7 @@ def get_licitacao_count_by_uf(db: Session):
     )
 
 
-# --- Análises ---
+# --- Análises & Anexos ---
 def create_licitacao_manual(
     db: Session,
     numero_controle_pncp: str,
@@ -133,6 +138,7 @@ def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
     db.add(analise)
     db.commit()
     db.refresh(analise)
+    logger.info(f"[crud] create_licitacao_analise analise_id={analise.id} licitacao_id={licitacao_id} status=Pendente")
     return analise
 
 
@@ -140,10 +146,32 @@ def get_analise(db: Session, analise_id: int) -> models.Analise | None:
     return db.query(models.Analise).filter(models.Analise.id == analise_id).first()
 
 
+def update_analise(
+    db: Session, analise_id: int, status: str | None = None, resultado: str | None = None
+) -> models.Analise | None:
+    """Atualiza uma análise, permitindo alterar status e/ou resultado."""
+    analise = get_analise(db, analise_id)
+    if not analise:
+        return None
+
+    if status is not None:
+        logger.info(f"[crud] update_analise analise_id={analise_id} status={status}")
+        analise.status = status
+    if resultado is not None:
+        logger.info(f"[crud] update_analise analise_id={analise_id} resultado_len={len(resultado)}")
+        analise.resultado = resultado
+
+    db.add(analise)
+    db.commit()
+    db.refresh(analise)
+    return analise
+
+
 def update_analise_status(db: Session, analise_id: int, status: str) -> models.Analise | None:
     analise = get_analise(db, analise_id)
     if not analise:
         return None
+    logger.info(f"[crud] update_analise_status analise_id={analise_id} status={status}")
     analise.status = status
     db.add(analise)
     db.commit()
@@ -157,7 +185,9 @@ def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: 
         return None
     analise.resultado = resultado
     analise.status = status
+    logger.info(f"[crud] set_analise_resultado analise_id={analise_id} status={status} resultado_len={len(resultado)}")
     db.add(analise)
     db.commit()
     db.refresh(analise)
     return analise
+
