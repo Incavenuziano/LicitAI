@@ -8,7 +8,7 @@ def analisar_licitacoes_com_pandas():
     Usa a biblioteca Pandas para carregar as licitações do banco de dados e fazer uma análise.
     Esta função se conecta ao banco de dados, conta o número total de licitações,
     e agrupa as licitações por modalidade.
-    Retorna uma string contendo um relatório formatado da análise.
+    Retorna uma string contendo um relatório formatado em markdown com os resultados da análise.
     """
     print("--- Iniciando análise com Pandas ---")
     try:

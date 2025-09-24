@@ -17,3 +17,32 @@ Erro.txt
 # Ignorar arquivos de modelo HTML
 frontend/icons_sidebar.html
 frontend/painel_dashboard.html
+# Node dependencies
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+.next/
+
+# Temporary/backend artifacts
+backend/tmp/
+backend/tmp/**
+backend/backend/
+backend/scripts/
+
+# Databases and caches
+*.db
+*.sqlite
+backend/test.db
+backend/tmp_*/
+
+# Generated or local playground code
+pncp_cli/
+src/
+
+# Misc temporary files
+backend/main.backup.*
+temp_*
+frontend/public/.well-known/
+
+agno-temp/

@@ -217,6 +217,182 @@ async def _compras_precos_itens_do_contrato(contrato_id: int) -> List[float]:
     return prices
 
 
+async def _compras_obter_contrato_info(contrato_id: int) -> Optional[Dict[str, Any]]:
+    """Obtém metadados de um contrato: datas (assinatura, vigência), órgão, etc.
+
+    Endpoint esperado: https://compras.dados.gov.br/comprasContratos/doc/contrato/{id}
+    """
+    url = f"https://compras.dados.gov.br/comprasContratos/doc/contrato/{contrato_id}"
+    data = await _http_get_json(url)
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+async def serie_comprasgov_por_descricao(descricao: str, limit_ids: int = 30) -> List[Dict[str, Any]]:
+    """Gera série (date,value,fonte,contrato_id) a partir de contratos do ComprasGov por termo do objeto.
+
+    - Data usada: data de assinatura do contrato (aproximação)
+    - Valor: preços unitários derivados dos itens do contrato
+    """
+    ids = await _compras_list_contratos_por_objeto(descricao, limit_ids=limit_ids)
+    out: List[Dict[str, Any]] = []
+    for cid in ids:
+        try:
+            meta = await _compras_obter_contrato_info(cid)
+            # heurística: procurar campo de data (assinatura/vigência)
+            date_str = None
+            if isinstance(meta, dict):
+                for k, v in meta.items():
+                    kl = str(k).lower()
+                    if isinstance(v, str) and any(t in kl for t in ["assin", "vigenc", "data"]):
+                        date_str = v
+                        break
+            # normalizar data para YYYY-MM-DD quando possível
+            norm_date = None
+            if date_str:
+                try:
+                    from datetime import datetime as _dt
+                    # tentar iso, yyyy-mm-dd, dd/mm/yyyy
+                    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%Y %H:%M:%S"):
+                        try:
+                            norm_date = _dt.strptime(date_str[:19], fmt).strftime("%Y-%m-%d")
+                            break
+                        except Exception:
+                            continue
+                except Exception:
+                    norm_date = None
+            prices = await _compras_precos_itens_do_contrato(cid)
+            for p in prices:
+                out.append({
+                    "date": norm_date or None,
+                    "value": float(p),
+                    "fonte": "comprasgov",
+                    "contrato_id": cid,
+                })
+        except Exception:
+            continue
+    # filtra entradas sem valor
+    return [x for x in out if isinstance(x.get("value"), (int, float))]
+
+
+async def _pncp_busca_publicacoes(
+    *,
+    data_inicial: str,
+    data_final: str,
+    pagina: int = 1,
+    tamanho_pagina: int = 50,
+    uf: Optional[str] = None,
+    codigo_modalidade: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Consulta PNCP publicaçoes no intervalo informado.
+
+    Endpoint: https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao
+    Requer dataInicial/dataFinal (yyyyMMdd)
+    """
+    params: Dict[str, Any] = {
+        "dataInicial": data_inicial,
+        "dataFinal": data_final,
+        "pagina": pagina,
+        "tamanhoPagina": tamanho_pagina,
+    }
+    if uf:
+        params["uf"] = uf
+    if codigo_modalidade is not None:
+        params["codigoModalidadeContratacao"] = codigo_modalidade
+    try:
+        r = httpx.get("https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao", params=params, timeout=45.0)
+        r.raise_for_status()
+        return r.json()  # type: ignore[return-value]
+    except Exception:
+        return None
+
+
+async def serie_pncp_por_descricao(
+    descricao: str,
+    *,
+    total_days: int = 180,
+    step_days: int = 30,
+    uf: Optional[str] = None,
+    codigo_modalidade: Optional[int] = None,
+    page_limit: int = 10,
+    tamanho_pagina: int = 50,
+) -> List[Dict[str, Any]]:
+    """Gera série (date,value,fonte,numeroControlePNCP) a partir de publicações do PNCP por termo do objeto.
+
+    - Data usada: dataEncerramentoProposta (preferida) ou dataPublicacaoPncp
+    - Valor: valorTotalEstimado (aproximação do ticket da compra)
+    """
+    from datetime import datetime, timedelta
+
+    base = datetime.utcnow()
+    start = base - timedelta(days=total_days)
+
+    # blocos yyyyMMdd
+    blocks: List[tuple[str, str]] = []
+    cur = start
+    while cur <= base:
+        nxt = min(cur + timedelta(days=step_days), base)
+        blocks.append((cur.strftime("%Y%m%d"), nxt.strftime("%Y%m%d")))
+        cur = nxt + timedelta(days=1)
+
+    want = descricao.lower()
+    out: List[Dict[str, Any]] = []
+
+    for d_ini, d_fim in blocks:
+        for page in range(1, page_limit + 1):
+            payload = await _pncp_busca_publicacoes(
+                data_inicial=d_ini,
+                data_final=d_fim,
+                pagina=page,
+                tamanho_pagina=tamanho_pagina,
+                uf=uf,
+                codigo_modalidade=codigo_modalidade,
+            )
+            data_rows = payload.get("data") if isinstance(payload, dict) else None  # type: ignore[union-attr]
+            if not data_rows:
+                break
+            for row in data_rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    obj = str(row.get("objetoCompra") or "").lower()
+                except Exception:
+                    obj = ""
+                if want and (want not in obj):
+                    continue
+
+                # Data preferencial de encerramento de propostas; fallback dataPublicacaoPncp
+                date_raw = row.get("dataEncerramentoProposta") or row.get("dataPublicacaoPncp")
+                date_norm = None
+                if isinstance(date_raw, str) and date_raw:
+                    try:
+                        # data vem no formato ISO yyyy-MM-ddTHH:MM:SS
+                        date_norm = date_raw[:10]
+                    except Exception:
+                        date_norm = None
+
+                # Valor estimado
+                val = row.get("valorTotalEstimado")
+                try:
+                    val_f = float(val) if isinstance(val, (int, float)) else None
+                except Exception:
+                    val_f = None
+                if val_f is None:
+                    continue
+
+                out.append({
+                    "date": date_norm,
+                    "value": float(val_f),
+                    "fonte": "pncp",
+                    "numeroControlePNCP": row.get("numeroControlePNCP"),
+                })
+    # ordenar e filtrar
+    out = [p for p in out if p.get("date") and isinstance(p.get("value"), (int, float))]
+    out.sort(key=lambda x: x.get("date"))
+    return out
+
+
 async def pesquisar_precos_vencedores_similares(
     db: Session, licitacao_id: int, top_k_similares: int = 20, fonte: str = "comprasgov"
 ) -> Dict[str, Any]:

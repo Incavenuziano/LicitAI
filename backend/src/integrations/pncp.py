@@ -8,6 +8,44 @@ try:
 except Exception:  # pragma: no cover
     httpx = None
 
+# API direta do PNCP/Compras.gov.br (documentos)
+BASE_API_URL = "https://compras.gov.br/pncp/v1"
+
+def listar_documentos_api(ano: str, sequencial: str, *, timeout: float = 30.0):
+    """Lista documentos de uma contratação via API direta.
+
+    Endpoint esperado: GET {BASE_API_URL}/contratacoes/{ano}/{sequencial}/documentos
+    Retorna a lista JSON (ou None se falhar).
+    """
+    if httpx is None:
+        return None
+    url = f"{BASE_API_URL}/contratacoes/{ano}/{sequencial}/documentos"
+    try:
+        r = httpx.get(url, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"[API Direta] Erro ao listar documentos para {ano}/{sequencial}: {e}")
+        return None
+
+
+def baixar_documento_api(ano: str, sequencial: str, seq_documento: int, *, timeout: float = 60.0) -> Optional[bytes]:
+    """Baixa o conteúdo de um documento específico via API direta.
+
+    Endpoint esperado: GET {BASE_API_URL}/contratacoes/{ano}/{sequencial}/documentos/{seq_documento}/arquivo
+    Retorna bytes do arquivo (ou None se falhar).
+    """
+    if httpx is None:
+        return None
+    url = f"{BASE_API_URL}/contratacoes/{ano}/{sequencial}/documentos/{int(seq_documento)}/arquivo"
+    try:
+        r = httpx.get(url, timeout=timeout, follow_redirects=True)
+        r.raise_for_status()
+        return r.content
+    except Exception as e:
+        print(f"[API Direta] Erro ao baixar documento {seq_documento} de {ano}/{sequencial}: {e}")
+        return None
+
 
 def _normalize_date_str(d: str | datetime) -> str:
     """Aceita 'YYYY-MM-DD', 'YYYYMMDD' ou datetime e retorna 'YYYYMMDD'."""

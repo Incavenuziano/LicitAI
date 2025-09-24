@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import DOMPurify from 'dompurify';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
 import {
   getLicitacoes,
   LicitacaoFilters,
@@ -10,6 +12,7 @@ import {
   buscarLicitacoes,
   ragIndexar,
   ragPerguntar,
+  deleteAnexosPorLicitacao,
 } from '@/services/api';
 import { Licitacao, Analise } from '@/types';
 import EditalUploader from './EditalUploader';
@@ -89,7 +92,7 @@ const StatusAnalise: React.FC<{
 
 const getClassificacao = (objeto: string | null): string => {
   if (!objeto) return 'Outros';
-  const strip = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const strip = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
   const texto = strip(objeto.toLowerCase());
   const keywordsServico = ['servicos', 'consultoria', 'manutencao', 'execucao de obra', 'elaboracao de projeto'];
   const keywordsAquisicao = ['aquisicao', 'compra', 'fornecimento', 'material', 'equipamentos'];
@@ -118,6 +121,7 @@ export default function OportunidadesTabela() {
   const [ragIndexing, setRagIndexing] = useState(false);
   const [ragAnswers, setRagAnswers] = useState<{ q: string; a: string }[]>([]);
   const [isFetchingNew, setIsFetchingNew] = useState(false);
+  const [deletingFiles, setDeletingFiles] = useState(false);
 
   const fetchData = async (filters: LicitacaoFilters) => {
     setLoading(true);
@@ -134,13 +138,14 @@ export default function OportunidadesTabela() {
   }, [filtroQ, filtroUF]);
 
   useEffect(() => {
-    const temAnalisePendente = licitacoes.some(
-      (l) => l.analises && l.analises.some((a) => ['Pendente', 'Em Andamento', 'Processando'].includes(a.status))
-    );
-    if (temAnalisePendente) {
-      const timer = setTimeout(() => fetchData({ q: filtroQ, uf: filtroUF }), 5000);
-      return () => clearTimeout(timer);
-    }
+    // DESATIVADO TEMPORARIAMENTE PARA EVITAR LOOP
+    // const temAnalisePendente = licitacoes.some(
+    //   (l) => l.analises && l.analises.some((a) => ['Pendente', 'Em Andamento', 'Processando'].includes(a.status))
+    // );
+    // if (temAnalisePendente) {
+    //   const timer = setTimeout(() => fetchData({ q: filtroQ, uf: filtroUF }), 5000);
+    //   return () => clearTimeout(timer);
+    // }
   }, [licitacoes, filtroQ, filtroUF]);
 
   const licitacoesExibidas = useMemo(() => {
@@ -296,16 +301,24 @@ export default function OportunidadesTabela() {
   const columns: Column<Licitacao>[] = [
     {
       header: 'Órgão',
-      cellClassName: 'py-2 px-4 border-b whitespace-normal',
+      headerClassName:
+        'py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 w-1/5',
+      cellClassName: 'py-2 px-4 border-b whitespace-normal w-1/5',
       render: (l) => l.orgao_entidade_nome,
     },
     {
       header: 'Objeto',
-      cellClassName: 'py-2 px-4 border-b whitespace-normal break-words',
+      headerClassName:
+        'py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 w-2/5',
+      cellClassName:
+        'py-2 px-4 border-b whitespace-normal break-words w-2/5',
       render: (l) => l.objeto_compra,
     },
     {
       header: 'Data de Encerramento',
+      headerClassName:
+        'py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 w-32',
+      cellClassName: 'py-2 px-4 border-b whitespace-nowrap w-32',
       render: (l) =>
         l.data_encerramento_proposta
           ? new Date(l.data_encerramento_proposta).toLocaleDateString('pt-BR')
@@ -314,8 +327,8 @@ export default function OportunidadesTabela() {
     {
       header: 'Valor Estimado',
       headerClassName:
-        'py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 whitespace-normal w-1/6',
-      cellClassName: 'py-2 px-4 border-b text-right whitespace-nowrap',
+        'py-3 px-4 border-b border-gray-200 text-right font-semibold text-gray-700 w-32',
+      cellClassName: 'py-2 px-4 border-b text-right whitespace-nowrap w-32',
       render: (l) =>
         l.valor_total_estimado
           ? parseFloat(l.valor_total_estimado).toLocaleString('pt-BR', {
@@ -326,8 +339,9 @@ export default function OportunidadesTabela() {
     },
     {
       header: 'Edital',
-      headerClassName: 'py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700',
-      cellClassName: 'py-2 px-4 border-b text-center whitespace-nowrap',
+      headerClassName:
+        'py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700 w-24',
+      cellClassName: 'py-2 px-4 border-b text-center whitespace-nowrap w-24',
       render: (l) => (
         <span onClick={(e) => e.stopPropagation()}>
           {l.link_sistema_origem ? (
@@ -337,41 +351,12 @@ export default function OportunidadesTabela() {
               rel="noopener noreferrer"
               className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-sm"
             >
-              Acessar
+              abrir
             </a>
           ) : (
-            'N/D'
+            <span className="text-gray-400">N/A</span>
           )}
         </span>
-      ),
-    },
-    {
-      header: 'Preços',
-      headerClassName: 'py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700',
-      cellClassName: 'py-2 px-4 border-b text-center whitespace-nowrap',
-      render: (l) => (
-        <span onClick={(e) => e.stopPropagation()}>
-          <Link href={`/precos/${l.id}`} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1 px-2 rounded text-sm">
-            Preços
-          </Link>
-        </span>
-      ),
-    },
-    {
-      header: 'Status da Análise',
-      render: (l) => (
-        <div
-          className={`${(() => {
-            const st = l.analises && l.analises[0] ? l.analises[0].status : undefined;
-            const s = String(st).toLowerCase();
-            if (s === 'processando') return 'bg-yellow-50';
-            if (s === 'erro') return 'bg-red-50';
-            if (s.startsWith('conclu')) return 'bg-green-50';
-            return '';
-          })()} text-center`}
-        >
-          <StatusAnalise analise={l.analises && l.analises[0]} onVerResultado={() => handleShowResultado(l)} />
-        </div>
       ),
     },
   ];
@@ -506,8 +491,12 @@ export default function OportunidadesTabela() {
               </button>
             </div>
           </div>
-          <div className="whitespace-pre-wrap bg-white p-3 rounded border border-blue-100 font-mono text-sm max-h-96 overflow-auto">
-            {selectedAnalise.resultado}
+          <div className="bg-white p-3 rounded border border-blue-100 text-sm max-h-96 overflow-auto">
+            <div
+              dangerouslySetInnerHTML={{
+                __html: DOMPurify.sanitize(selectedAnalise.resultado || ''),
+              }}
+            />
             <div className="mt-3 rounded border border-blue-100 bg-white p-3">
               <h4 className="font-semibold mb-2 text-sm">Perguntar ao Edital (RAG)</h4>
               <div className="flex gap-2 mb-2">
@@ -576,6 +565,31 @@ export default function OportunidadesTabela() {
               {isAnalysing ? 'Analisando...' : 'Analisar Selecionados'}
             </button>
             <button
+              onClick={async () => {
+                if (selectedIds.size === 0) return;
+                if (!confirm(`Remover anexos dos ${selectedIds.size} itens selecionados?`)) return;
+                setDeletingFiles(true);
+                try {
+                  const ids = Array.from(selectedIds);
+                  for (const id of ids) {
+                    await deleteAnexosPorLicitacao(id);
+                  }
+                  // Remover do estado as licitações deletadas
+                  setLicitacoes((prev) => prev.filter((l) => !selectedIds.has(l.id)));
+                  setSelectedIds(new Set());
+                  alert('Licitações e arquivos removidos.');
+                } catch (e: any) {
+                  alert(e?.message || 'Falha ao remover anexos.');
+                } finally {
+                  setDeletingFiles(false);
+                }
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:bg-gray-400"
+              disabled={selectedIds.size === 0 || deletingFiles}
+            >
+              {deletingFiles ? 'Apagando...' : 'Apagar Arquivo(s)'}
+            </button>
+            <button
               onClick={handleExport}
               className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-400"
               disabled={selectedIds.size === 0}
@@ -605,4 +619,3 @@ export default function OportunidadesTabela() {
     </div>
   );
 }
-

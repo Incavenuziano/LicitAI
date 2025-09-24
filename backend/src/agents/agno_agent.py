@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 from typing import Optional
 
 try:
@@ -79,6 +80,201 @@ if tool is not None:
             db.close()
 
 
+    # Separamos a lógica da ferramenta para permitir testes diretos
+    def _buscar_e_baixar_editais_logic(uf: str, data_inicial: str, data_final: str, tamanho_pagina: int = 5) -> str:
+        """Lógica principal: busca licitações e, para cada uma, tenta baixar o edital."""
+        print(f"--- Iniciando busca e download para {uf} de {data_inicial} a {data_final} ---")
+        
+        # 1. Buscar os metadados das licitações
+        licitacoes_json_str = consultar_licitacoes_publicadas(
+            uf=uf, data_inicial=data_inicial, data_final=data_final, tamanho_pagina=tamanho_pagina
+        )
+        try:
+            licitacoes = json.loads(licitacoes_json_str)
+        except json.JSONDecodeError:
+            return f"Erro: A busca de licitações retornou um formato inválido."
+
+        if not licitacoes:
+            return "Nenhuma licitação encontrada para o período."
+
+        # 2. Tentar baixar o edital para cada licitação
+        sucessos = 0
+        db = SessionLocal()
+        try:
+            for licitacao in licitacoes:
+                link = licitacao.get("link_sistema_origem")
+                licitacao_id = licitacao.get("id")
+                if not link or not licitacao_id:
+                    continue
+                
+                print(f"-- Tentando baixar edital para licitação ID: {licitacao_id} --")
+                # Usamos asyncio.run para chamar nossa função assíncrona de forma síncrona no loop
+                local_path = asyncio.run(analysis_service.baixar_edital_com_playwright(link, licitacao_id))
+                
+                if local_path:
+                    sucessos += 1
+                    # 3. Registrar o anexo no banco de dados
+                    crud.create_anexo(
+                        db=db,
+                        licitacao_id=licitacao_id,
+                        source="playwright_download",
+                        local_path=local_path,
+                        filename=os.path.basename(local_path),
+                        content_type="application/pdf",
+                        status="downloaded"
+                    )
+                    print(f"-- SUCESSO: Edital baixado e registrado para licitação ID: {licitacao_id} --")
+        finally:
+            db.close()
+
+        resumo = f"Operação concluída. {len(licitacoes)} licitações encontradas. {sucessos} editais baixados com sucesso."
+        print(resumo)
+        return resumo
+
+    # Criamos a ferramenta para o agente Agno usando a função de lógica
+    buscar_e_baixar_editais = tool(_buscar_e_baixar_editais_logic)
+
+    def _buscar_e_baixar_editais_logic_router(uf: str, data_inicial: str, data_final: str, tamanho_pagina: int = 10) -> str:  # type: ignore[func-redefined]
+        print(f"--- Iniciando busca e download (router) para {uf} de {data_inicial} a {data_final} ---")
+
+        licitacoes_json_str = consultar_licitacoes_publicadas(
+            uf=uf, data_inicial=data_inicial, data_final=data_final, tamanho_pagina=tamanho_pagina
+        )
+        try:
+            licitacoes = json.loads(licitacoes_json_str)
+        except json.JSONDecodeError:
+            return "Erro: A busca de licitações retornou um formato inválido."
+
+        if isinstance(licitacoes, dict):
+            data_list = licitacoes.get("data")
+            if isinstance(data_list, list):
+                licitacoes = data_list
+            else:
+                msg = licitacoes.get("mensagem") or licitacoes.get("erro") or "payload não é lista"
+                return f"Nenhuma licitação processável: {msg}"
+
+        if not licitacoes:
+            return "Nenhuma licitação encontrada para o período."
+
+        sucessos = 0
+        db = SessionLocal()
+        try:
+            for row in licitacoes:
+                numero_controle = row.get("numeroControlePNCP") or row.get("numero_controle_pncp")
+                if not numero_controle:
+                    continue
+
+                licitacao_db = crud.get_licitacao_by_numero_controle(db, numero_controle)
+                if not licitacao_db:
+                    continue
+
+                print(f"-- Processando licitação: {numero_controle} --")
+                link = licitacao_db.link_sistema_origem or row.get("linkSistemaOrigem") or row.get("link_sistema_origem")
+
+                local_path = None
+                source_tag = None
+
+                if link and ("compras.gov.br" in link or "pncp.gov.br" in link):
+                    try:
+                        local_path = analysis_service.baixar_edital_via_api(licitacao_db)
+                        source_tag = "api_download" if local_path else None
+                    except Exception:
+                        local_path = None
+                        source_tag = None
+
+                if not local_path and link:
+                    print("-- Método API falhou. Tentando Playwright como fallback... --")
+                    ident = licitacao_db.id or numero_controle
+                    local_path = asyncio.run(analysis_service.baixar_edital_com_playwright_storage_v2(link, ident))
+                    source_tag = "playwright_download" if local_path else None
+
+                if local_path:
+                    sucessos += 1
+                    crud.create_anexo(
+                        db=db,
+                        licitacao_id=licitacao_db.id,
+                        source=source_tag or "download",
+                        local_path=local_path,
+                        filename=os.path.basename(local_path),
+                        content_type="application/pdf",
+                        status="downloaded",
+                    )
+                    print(f"-- SUCESSO: Edital baixado e registrado para licitação ID: {licitacao_db.id} --")
+        finally:
+            db.close()
+
+        resumo = f"Operação concluída. {len(licitacoes)} licitações encontradas. {sucessos} editais baixados com sucesso."
+        print(resumo)
+        return resumo
+
+    # Passa a ferramenta a usar o roteador por padrão
+    buscar_e_baixar_editais = tool(_buscar_e_baixar_editais_logic_router)
+
+    # Versao revisada: aceita numeroControlePNCP como identificador e prossegue sem ID (permite page.pause)
+    def _buscar_e_baixar_editais_logic(uf: str, data_inicial: str, data_final: str, tamanho_pagina: int = 5) -> str:  # type: ignore[func-redefined]
+        print(f"--- Iniciando busca e download para {uf} de {data_inicial} a {data_final} ---")
+
+        licitacoes_json_str = consultar_licitacoes_publicadas(
+            uf=uf, data_inicial=data_inicial, data_final=data_final, tamanho_pagina=tamanho_pagina
+        )
+        try:
+            licitacoes = json.loads(licitacoes_json_str)
+        except json.JSONDecodeError:
+            return "Erro: A busca de licitações retornou um formato inválido."
+
+        # Garantir que seja uma lista; se vier um dict com erro/mensagem, aborta com resumo
+        if isinstance(licitacoes, dict):
+            data_list = licitacoes.get("data")
+            if isinstance(data_list, list):
+                licitacoes = data_list
+            else:
+                msg = licitacoes.get("mensagem") or licitacoes.get("erro") or "payload não é lista"
+                return f"Nenhuma licitação processável: {msg}"
+
+        if not licitacoes:
+            return "Nenhuma licitação encontrada para o período."
+
+        sucessos = 0
+        db = SessionLocal()
+        try:
+            for licitacao in licitacoes:
+                link = licitacao.get("linkSistemaOrigem") or licitacao.get("link_sistema_origem")
+                licitacao_id = licitacao.get("id")
+                numero = licitacao.get("numeroControlePNCP") or licitacao.get("numero_controle_pncp")
+                ident = licitacao_id or numero or "sem-ident"
+                if not link:
+                    continue
+
+                print(f"-- Tentando baixar edital para identificador: {ident} --")
+                # Usa versão com storage_state para facilitar passar pelo captcha invisível
+                local_path = asyncio.run(analysis_service.baixar_edital_com_playwright_storage_v2(link, ident))
+
+                if local_path:
+                    sucessos += 1
+                    if licitacao_id:
+                        crud.create_anexo(
+                            db=db,
+                            licitacao_id=licitacao_id,
+                            source="playwright_download",
+                            local_path=local_path,
+                            filename=os.path.basename(local_path),
+                            content_type="application/pdf",
+                            status="downloaded",
+                        )
+                        print(f"-- SUCESSO: Edital baixado e registrado para licitação ID: {licitacao_id} --")
+                    else:
+                        print(f"-- SUCESSO: Edital baixado (somente arquivo) para identificador: {ident} --")
+        finally:
+            db.close()
+
+        resumo = f"Operação concluída. {len(licitacoes)} licitações encontradas. {sucessos} editais baixados com sucesso."
+        print(resumo)
+        return resumo
+
+    # Atualiza a ferramenta para apontar para a versão revisada
+    buscar_e_baixar_editais = tool(_buscar_e_baixar_editais_logic)
+
+
 def make_agent() -> Agent:
     """Cria um agente Agno com Gemini-flash, storage e memoria persistente.
 
@@ -126,6 +322,7 @@ def make_agent() -> Agent:
         tools=[
             buscar_licitacoes,
             salvar_licitacoes_json,
+            buscar_e_baixar_editais, # <-- FERRAMENTA ADICIONADA
             anexos_pncp,
             anexos_comprasnet,
             criar_e_rodar_analise,
@@ -135,7 +332,7 @@ def make_agent() -> Agent:
         add_history_to_messages=True,
         num_history_responses=5,
         add_datetime_to_instructions=True,
-        markdown=False,
+        markdown=True,
     )
 
 
@@ -147,42 +344,67 @@ def run_agent(message: str, context: Optional[dict] = None) -> str:
     try:
         return str(response)
     except Exception:
-        return json.dumps({"result": response}, ensure_ascii=False)
+        return json.dumps({"result": resp}, ensure_ascii=False)
 
 
 # Prompt base adaptado para análise de editais (Lei 14.133/21, TCU, etc.)
-BASE_PROMPT = (
-    "Instruções para o LLM\n"
-    "Você é um especialista em licitações públicas, com conhecimento aprofundado na Lei nº 14.133/2021,\n"
-    "nas orientações do Tribunal de Contas da União (TCU), e nas melhores práticas de planejamento,\n"
-    "instrução, julgamento e fiscalização de contratos administrativos.\n\n"
-    "Contexto da Análise:\n"
-    "Será analisada uma seção específica de um edital de licitação (ou o edital completo).\n"
-    "A sua tarefa é examinar o conteúdo apresentado e emitir uma avaliação técnico-jurídica com base na\n"
-    "conformidade legal, nos princípios constitucionais, nas boas práticas administrativas e nos\n"
-    "entendimentos do TCU.\n\n"
-    "Sua análise deve considerar os seguintes eixos normativos e operacionais:\n"
-    "I. Conformidade Legal (Lei nº 14.133/2021) – prazos, procedimentos, publicações, contraditório, ampla defesa, isonomia, interesse público.\n"
-    "II. Princípios Aplicáveis – legalidade, impessoalidade, moralidade, publicidade, eficiência, planejamento,\n"
-    "vinculação ao instrumento convocatório, julgamento objetivo, desenvolvimento nacional sustentável.\n"
-    "III. Check de Elementos Essenciais do Edital – objeto, fundamentos legais, critério de julgamento, habilitação,\n"
-    "cláusulas contratuais, condições de participação, cronograma, sanções, impugnação/recursos, PNCP.\n"
-    "IV. Riscos Jurídicos e Omissões – dispositivos omissos/ilegais, desproporcionalidade, hipóteses de impugnação.\n"
-    "V. Jurisprudência e Boas Práticas do TCU – entendimentos relevantes e recomendações.\n"
-    "VI. Recomendações Técnicas – melhorias para legalidade, economicidade, eficiência, transparência e segurança jurídica.\n\n"
-    "Formato de Resposta Esperado:\n"
-    "## [TÍTULO DA SEÇÃO ANALISADA]\n\n"
-    "### 1. Conformidade Legal\n[✔️ ou ⚠️] Análise com citação de artigos pertinentes da Lei nº 14.133/21.\n\n"
-    "### 2. Princípios da Administração Pública\n[✔️ ou ⚠️] Indicação dos princípios envolvidos e eventuais violações.\n\n"
-    "### 3. Checklist Técnico\n| Item | Avaliação | Observação técnica |\n|---|---|---|\n"
-    "| Objeto definido | ✔️/⚠️/❌ | … |\n| Fundamentação legal | ✔️/⚠️/❌ | … |\n| Critério de julgamento | ✔️/⚠️/❌ | … |\n| Requisitos de habilitação | ✔️/⚠️/❌ | … |\n| Cláusulas contratuais | ✔️/⚠️/❌ | … |\n| Condições de participação | ✔️/⚠️/❌ | … |\n| Cronograma | ✔️/⚠️/❌ | … |\n| Sanções administrativas | ✔️/⚠️/❌ | … |\n| Impugnação/recursos | ✔️/⚠️/❌ | … |\n| PNCP | ✔️/⚠️/❌ | … |\n\n"
-    "### 4. Riscos Jurídicos Identificados\n- …\n\n"
-    "### 5. Jurisprudência Aplicável\n> Cite entendimentos do TCU pertinentes.\n\n"
-    "### 6. Recomendações Técnicas\n- …\n\n"
-    "Observações Finais:\n"
-    "Seja técnico, claro e objetivo; cite artigos da Lei 14.133/21 quando aplicável; não faça suposições;\n"
-    "use marcadores (✔️, ⚠️, ❌) para indicar conformidade.\n"
-)
+BASE_PROMPT = """Instruções para o LLM
+Você é um especialista em licitações públicas, com conhecimento aprofundado na Lei nº 14.133/2021,
+nas orientações do Tribunal de Contas da União (TCU), e nas melhores práticas de planejamento,
+instrução, julgamento e fiscalização de contratos administrativos.
+
+Contexto da Análise:
+Será analisada uma seção específica de um edital de licitação (ou o edital completo).
+A sua tarefa é examinar o conteúdo apresentado e emitir uma avaliação técnico-jurídica com base na
+conformidade legal, nos princípios constitucionais, nas boas práticas administrativas e nos
+entendimentos do TCU.
+
+Sua análise deve considerar os seguintes eixos normativos e operacionais:
+I. Conformidade Legal (Lei nº 14.133/2021) – prazos, procedimentos, publicações, contraditório, ampla defesa, isonomia, interesse público.
+II. Princípios Aplicáveis – legalidade, impessoalidade, moralidade, publicidade, eficiência, planejamento,
+vinculação ao instrumento convocatório, julgamento objetivo, desenvolvimento nacional sustentável.
+III. Check de Elementos Essenciais do Edital – objeto, fundamentos legais, critério de julgamento, habilitação,
+cláusulas contratuais, condições de participação, cronograma, sanções, impugnação/recursos, PNCP.
+IV. Riscos Jurídicos e Omissões – dispositivos omissos/ilegais, desproporcionalidade, hipóteses de impugnação.
+V. Jurisprudência e Boas Práticas do TCU – entendimentos relevantes e recomendações.
+VI. Recomendações Técnicas – melhorias para legalidade, economicidade, eficiência, transparência e segurança jurídica.
+
+Formato de Resposta Esperado:
+## [TÍTULO DA SEÇÃO ANALISADA]
+
+### 1. Conformidade Legal
+[✔️ ou ⚠️] Análise com citação de artigos pertinentes da Lei nº 14.133/21.
+
+### 2. Princípios da Administração Pública
+[✔️ ou ⚠️] Indicação dos princípios envolvidos e eventuais violações.
+
+### 3. Checklist Técnico
+| Item | Avaliação | Observação técnica |
+|---|---|---|
+| Objeto definido | ✔️/⚠️/❌ | … |
+| Fundamentação legal | ✔️/⚠️/❌ | … |
+| Critério de julgamento | ✔️/⚠️/❌ | … |
+| Requisitos de habilitação | ✔️/⚠️/❌ | … |
+| Cláusulas contratuais | ✔️/⚠️/❌ | … |
+| Condições de participação | ✔️/⚠️/❌ | … |
+| Cronograma | ✔️/⚠️/❌ | … |
+| Sanções administrativas | ✔️/⚠️/❌ | … |
+| Impugnação/recursos | ✔️/⚠️/❌ | … |
+| PNCP | ✔️/⚠️/❌ | … |
+
+### 4. Riscos Jurídicos Identificados
+- …
+
+### 5. Jurisprudência Aplicável
+> Cite entendimentos do TCU pertinentes.
+
+### 6. Recomendações Técnicas
+- …
+
+Observações Finais:
+Seja técnico, claro e objetivo; cite artigos da Lei 14.133/21 quando aplicável; não faça suposições;
+use marcadores (✔️, ⚠️, ❌) para indicar conformidade.
+"""
 
 
 def run_edital_analysis(texto: str, titulo_secao: Optional[str] = None, context: Optional[dict] = None) -> str:
@@ -190,10 +412,35 @@ def run_edital_analysis(texto: str, titulo_secao: Optional[str] = None, context:
     agent = make_agent()
     if context:
         agent.context = context
+    
     titulo = titulo_secao or "Seção do Edital"
-    prompt = f"{BASE_PROMPT}\n\n## {titulo}\n\n[TEXTO]\n{texto}\n\nProduza a análise conforme o formato esperado."
+    prompt = f"""{BASE_PROMPT}
+
+## {titulo}
+
+[TEXTO]
+{texto}
+
+Produza a análise conforme o formato esperado."""
+    
     resp = agent.run(prompt)
+    # Normalizar resposta para string de conteúdo (Markdown/Texto)
     try:
+        # Objetos Agno geralmente expõem `.content`
+        if hasattr(resp, "content") and isinstance(getattr(resp, "content"), str):
+            return resp.content  # type: ignore[return-value]
+        # Pode vir como dict
+        if isinstance(resp, dict):
+            if isinstance(resp.get("content"), str):
+                return resp["content"]  # type: ignore[return-value]
+            # Alguns modelos usam 'text' ou similar
+            if isinstance(resp.get("text"), str):
+                return resp["text"]  # type: ignore[return-value]
+        # Fallback final: stringificar
         return str(resp)
     except Exception:
-        return json.dumps({"result": resp}, ensure_ascii=False)
+        try:
+            return str(resp)
+        except Exception:
+            return json.dumps({"result": "<unserializable>"}, ensure_ascii=False)
+

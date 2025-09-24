@@ -1,13 +1,13 @@
 'use client';
 
 import type { NextPage } from 'next';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import styles from './login.module.css';
 import LogoBranca from '@/components/LogoBranca';
 
-const LoginPage: NextPage = () => {
+const LoginContent: NextPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -100,5 +100,11 @@ const LoginPage: NextPage = () => {
     </div>
   );
 };
+
+const LoginPage: NextPage = () => (
+  <Suspense fallback={<div className={styles.container}>Carregando...</div>}>
+    <LoginContent />
+  </Suspense>
+);
 
 export default LoginPage;

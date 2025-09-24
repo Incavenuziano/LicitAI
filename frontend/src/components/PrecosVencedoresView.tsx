@@ -1,29 +1,53 @@
-"use client";
+﻿'use client';
 
-import { useEffect, useState } from "react";
-import { getPrecosVencedores, PrecoVencedorResponse } from "@/services/api";
+import { useEffect, useState } from 'react';
+import { getPrecosVencedores } from '@/services/api';
+import { PrecoVencedorResponse } from '@/types';
 
-export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comprasgov' as 'comprasgov'|'pncp'|'ambas' }) {
-  const [fonte, setFonte] = useState<'comprasgov'|'pncp'|'ambas'>(defaultFonte);
+type FontePreco = 'comprasgov' | 'pncp' | 'ambas';
+
+interface Props {
+  licitacaoId: number;
+  defaultFonte?: FontePreco;
+}
+
+const fonteOptions: FontePreco[] = ['comprasgov', 'pncp', 'ambas'];
+const fonteLabels: Record<FontePreco, string> = {
+  comprasgov: 'ComprasGov (Contratos)',
+  pncp: 'PNCP (heuristico)',
+  ambas: 'Ambas',
+};
+
+const formatCurrency = (value: number | null | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comprasgov' }: Props) {
+  const [fonte, setFonte] = useState<FontePreco>(defaultFonte);
   const [data, setData] = useState<PrecoVencedorResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getPrecosVencedores(licitacaoId, fonte, 20);
-      setData(res);
-    } catch (e: any) {
-      setError(e?.message || 'Falha ao carregar preços');
+      const response = await getPrecosVencedores(licitacaoId, fonte, 20);
+      setData(response);
+    } catch (err: any) {
+      setError(err?.message || 'Falha ao carregar precos');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!Number.isFinite(licitacaoId)) return;
+    if (!Number.isFinite(licitacaoId)) {
+      return;
+    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [licitacaoId, fonte]);
@@ -34,14 +58,19 @@ export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comp
         <label className="text-sm text-gray-600">Fonte:</label>
         <select
           value={fonte}
-          onChange={(e) => setFonte(e.target.value as any)}
+          onChange={(event) => setFonte(event.target.value as FontePreco)}
           className="border rounded px-2 py-1 text-sm"
         >
-          <option value="comprasgov">ComprasGov (Contratos)</option>
-          <option value="pncp">PNCP (heurístico)</option>
-          <option value="ambas">Ambas</option>
+          {fonteOptions.map((option) => (
+            <option key={option} value={option}>
+              {fonteLabels[option]}
+            </option>
+          ))}
         </select>
-        <button onClick={load} className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white py-1 px-3 rounded">
+        <button
+          onClick={load}
+          className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white py-1 px-3 rounded"
+        >
           Recarregar
         </button>
       </div>
@@ -52,22 +81,28 @@ export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comp
       {data && !loading && (
         <div className="space-y-4">
           <div className="rounded border p-4 bg-white">
-            <h2 className="font-semibold mb-2">Licitação base</h2>
-            <div className="text-sm text-gray-700">
-              <div><span className="font-medium">ID:</span> {data.base.id}</div>
-              <div><span className="font-medium">Número PNCP:</span> {data.base.numero_controle_pncp || 'N/A'}</div>
-              <div><span className="font-medium">Objeto:</span> {data.base.objeto_compra || 'N/A'}</div>
+            <h2 className="font-semibold mb-2">Licitacao base</h2>
+            <div className="text-sm text-gray-700 space-y-1">
+              <div>
+                <span className="font-medium">ID:</span> {data.base.id}
+              </div>
+              <div>
+                <span className="font-medium">Numero PNCP:</span> {data.base.numero_controle_pncp || 'N/A'}
+              </div>
+              <div>
+                <span className="font-medium">Objeto:</span> {data.base.objeto_compra || 'N/A'}
+              </div>
             </div>
           </div>
 
           <div className="rounded border p-4 bg-white">
-            <h2 className="font-semibold mb-2">Estatísticas</h2>
+            <h2 className="font-semibold mb-2">Estatisticas</h2>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
               <div><span className="text-gray-500">Similares:</span> {data.similares_considerados}</div>
-              <div><span className="text-gray-500">Preços:</span> {data.precos_encontrados}</div>
-              <div><span className="text-gray-500">Mín:</span> {data.stats.min ?? '—'}</div>
-              <div><span className="text-gray-500">Mediana:</span> {data.stats.median ?? '—'}</div>
-              <div><span className="text-gray-500">Máx:</span> {data.stats.max ?? '—'}</div>
+              <div><span className="text-gray-500">Precos:</span> {data.precos_encontrados}</div>
+              <div><span className="text-gray-500">Min:</span> {formatCurrency(data.stats.min)}</div>
+              <div><span className="text-gray-500">Mediana:</span> {formatCurrency(data.stats.median)}</div>
+              <div><span className="text-gray-500">Max:</span> {formatCurrency(data.stats.max)}</div>
             </div>
           </div>
 
@@ -76,15 +111,15 @@ export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comp
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left border-b">
-                  <th className="py-2">Licitação ID</th>
-                  <th className="py-2">Preço</th>
+                  <th className="py-2">Licitacao ID</th>
+                  <th className="py-2">Preco</th>
                 </tr>
               </thead>
               <tbody>
-                {data.detalhes.slice(0, 30).map((d, i) => (
-                  <tr key={i} className="border-b hover:bg-gray-50">
-                    <td className="py-2">{d.licitacao_id}</td>
-                    <td className="py-2">{d.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                {data.detalhes.slice(0, 30).map((item, index) => (
+                  <tr key={`${item.licitacao_id}-${index}`} className="border-b hover:bg-gray-50">
+                    <td className="py-2">{item.licitacao_id}</td>
+                    <td className="py-2">{formatCurrency(item.preco)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -95,4 +130,3 @@ export default function PrecosVencedoresView({ licitacaoId, defaultFonte = 'comp
     </section>
   );
 }
-

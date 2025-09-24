@@ -50,13 +50,13 @@ export default function LicitacoesPorUfChart() {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={data}
-          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 50, right: 20, left: 20, bottom: 24 }}
         >
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="uf" />
           <YAxis />
           <Tooltip />
-          <Legend />
+          <Legend verticalAlign="top" align="right" height={36} wrapperStyle={{ top: 0, right: 0 }} />
           <Bar dataKey="total" fill="#4f46e5" name="Total de Licitações" />
         </BarChart>
       </ResponsiveContainer>

@@ -45,7 +45,7 @@ export default function LicitacoesPorUfPie() {
     <div className="w-full h-80">
       <h3 className="font-semibold mb-4">Participação por UF (Top 4 + Outros)</h3>
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
+        <PieChart margin={{ top: 20, right: 120, bottom: 20, left: 20 }}>
           <Pie
             data={pieData}
             cx="50%"
@@ -54,14 +54,18 @@ export default function LicitacoesPorUfPie() {
             outerRadius={80}
             dataKey="value"
             nameKey="name"
-            label={(entry) => `${entry.name} (${Math.round((entry.value / total) * 100)}%)`}
+            label={({ name, value }: { name?: string; value?: number }) => {
+              const safeValue = typeof value === "number" ? value : 0;
+              const percentage = total > 0 ? Math.round((safeValue / total) * 100) : 0;
+              return `${name ?? "N/A"} (${percentage}%)`;
+            }}
           >
             {pieData.map((_, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
           <Tooltip formatter={(v: number) => [v, 'Licitações']} />
-          <Legend />
+          <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ right: 0 }} />
         </PieChart>
       </ResponsiveContainer>
     </div>

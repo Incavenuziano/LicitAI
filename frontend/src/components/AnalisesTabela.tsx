@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
-import { getLicitacoes } from "@/services/api";
+import ReactMarkdown from 'react-markdown';
+import { getLicitacoes, deleteAnexosPorLicitacao } from "@/services/api";
+import DOMPurify from 'dompurify';
 import { Licitacao, Analise } from "@/types";
 
 // Componente reutilizado para mostrar o status e o botão
@@ -35,7 +37,12 @@ const StatusAnalise: React.FC<{
 export default function AnalisesTabela() {
   const [todasLicitacoes, setTodasLicitacoes] = useState<Licitacao[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedAnalise, setSelectedAnalise] = useState<{ resultado: string; orgao?: string | null; numero?: string | null; } | null>(null);
+  const [selectedAnalise, setSelectedAnalise] = useState<{
+    resultado: string;
+    orgao?: string;
+    numero?: string;
+  } | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -58,9 +65,9 @@ export default function AnalisesTabela() {
 
   const handleShowResultado = (licitacao: Licitacao & { analise: Analise }) => {
     setSelectedAnalise({
-      resultado: licitacao.analise.resultado,
-      orgao: licitacao.orgao_entidade_nome,
-      numero: licitacao.numero_controle_pncp,
+      resultado: licitacao.analise.resultado ?? '',
+      orgao: licitacao.orgao_entidade_nome ?? 'N/A',
+      numero: licitacao.numero_controle_pncp ?? 'N/A',
     });
   };
 
@@ -78,8 +85,12 @@ export default function AnalisesTabela() {
               </h3>
               <button onClick={() => setSelectedAnalise(null)} className="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
             </div>
-            <div className="whitespace-pre-wrap bg-gray-50 p-4 rounded border font-mono text-sm overflow-auto">
-              {selectedAnalise.resultado}
+            <div className="bg-gray-50 p-4 rounded border text-sm overflow-auto">
+              <div
+                dangerouslySetInnerHTML={{
+                  __html: DOMPurify.sanitize(selectedAnalise.resultado || ''),
+                }}
+              />
             </div>
           </div>
         </div>
@@ -96,6 +107,7 @@ export default function AnalisesTabela() {
                   <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700">Objeto da Licitação</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-left font-semibold text-gray-700 whitespace-nowrap">Data da Análise</th>
                   <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700">Status</th>
+                  <th className="py-3 px-4 border-b border-gray-200 text-center font-semibold text-gray-700">Arquivo</th>
                 </tr>
               </thead>
               <tbody>
@@ -112,6 +124,30 @@ export default function AnalisesTabela() {
                     </td>
                     <td className="py-2 px-4 border-b text-center">
                       <StatusAnalise analise={item.analise} onVerResultado={() => handleShowResultado(item)} />
+                    </td>
+                    <td className="py-2 px-4 border-b text-center">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm("Apagar arquivo(s) associado(s) a esta licitação?")) return;
+                          setDeletingId(item.id);
+                          try {
+                            await deleteAnexosPorLicitacao(item.id);
+                            // Remover a licitação deletada da lista local
+                            setTodasLicitacoes((prev) => prev.filter((l) => l.id !== item.id));
+                            alert("Licitação e arquivo(s) apagados.");
+                          } catch (err: any) {
+                            alert(err?.message || "Falha ao apagar arquivo(s)");
+                          } finally {
+                            setDeletingId(null);
+                          }
+                        }}
+                        className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400"
+                        disabled={deletingId === item.id}
+                        title="Apagar arquivo(s) vinculado(s)"
+                      >
+                        {deletingId === item.id ? "Apagando..." : "Apagar Arquivo"}
+                      </button>
                     </td>
                   </tr>
                 ))}

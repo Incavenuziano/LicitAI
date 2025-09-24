@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import DOMPurify from 'dompurify';
 import { getLicitacaoById } from '@/services/api';
 import { Licitacao } from '@/types';
 import Chatbot from '@/components/Chatbot';
@@ -11,7 +12,7 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
 
   useEffect(() => {
     const licitacaoId = parseInt(params.id, 10);
-    if (isNaN(licitacaoId)) {
+    if (Number.isNaN(licitacaoId)) {
       setLoading(false);
       return;
     }
@@ -27,14 +28,36 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
   }, [params.id]);
 
   if (loading) {
-    return <div className="p-6">Carregando detalhes da licitação...</div>;
+    return <div className="p-6">Carregando detalhes da licitacao...</div>;
   }
 
   if (!licitacao) {
-    return <div className="p-6">Licitação não encontrada.</div>;
+    return <div className="p-6">Licitacao nao encontrada.</div>;
   }
 
   const analise = licitacao.analises && licitacao.analises[0];
+  const sanitizedAnalysis = useMemo(() => {
+    if (!analise?.resultado) return '';
+    return DOMPurify.sanitize(analise.resultado);
+  }, [analise?.resultado]);
+
+  const dataEncerramento = useMemo(() => {
+    if (!licitacao.data_encerramento_proposta) return 'N/A';
+    const dt = new Date(licitacao.data_encerramento_proposta);
+    return Number.isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleDateString('pt-BR');
+  }, [licitacao.data_encerramento_proposta]);
+
+  const valorEstimado = useMemo(() => {
+    const raw = licitacao.valor_total_estimado;
+    if (raw === null || raw === undefined) return 'N/A';
+    if (typeof raw === 'string' && raw.trim() === '') return 'N/A';
+    const num = Number(raw);
+    return Number.isFinite(num)
+      ? num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      : 'N/A';
+  }, [licitacao.valor_total_estimado]);
+
+  const ufDisplay = licitacao.uf ?? 'N/A';
 
   return (
     <div className="space-y-6">
@@ -44,21 +67,21 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>UF:</strong> {licitacao.uf}</div>
-        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>Encerramento:</strong> {new Date(licitacao.data_encerramento_proposta!).toLocaleDateString('pt-BR')}</div>
-        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>Valor Estimado:</strong> {parseFloat(licitacao.valor_total_estimado!).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})}</div>
+        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>UF:</strong> {ufDisplay}</div>
+        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>Encerramento:</strong> {dataEncerramento}</div>
+        <div className="bg-white p-4 rounded-lg shadow-sm"><strong>Valor Estimado:</strong> {valorEstimado}</div>
       </div>
 
-      {/* Seção de Análise e Chatbot */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-4 rounded-lg shadow-sm">
-          <h2 className="text-xl font-bold mb-2">Análise da IA</h2>
-          {analise ? (
-            <div className="whitespace-pre-wrap font-mono text-xs p-4 bg-gray-50 rounded overflow-auto max-h-[60vh]">
-              {analise.resultado}
-            </div>
+          <h2 className="text-xl font-bold mb-2">Analise da IA</h2>
+          {analise && sanitizedAnalysis ? (
+            <div
+              className="p-4 bg-gray-50 rounded border border-gray-200 overflow-auto max-h-[60vh] text-sm leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: sanitizedAnalysis }}
+            />
           ) : (
-            <p className="text-gray-500">Nenhuma análise disponível para esta licitação.</p>
+            <p className="text-gray-500">Nenhuma analise disponivel para esta licitacao.</p>
           )}
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm">
@@ -66,7 +89,6 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
           <Chatbot licitacaoId={licitacao.id} />
         </div>
       </div>
-
     </div>
   );
 }

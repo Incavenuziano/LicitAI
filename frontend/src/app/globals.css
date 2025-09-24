@@ -2,5 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Formatting for AI analysis output */
+.analysis-result {
+  text-align: justify;
+  line-height: 1.7;
+  font-size: 0.95rem;
+}
+.analysis-result p {
+  margin: 0 0 0.75rem 0;
+}
+.analysis-result p:last-child {
+  margin-bottom: 0;
+}
+.analysis-result strong {
+  font-weight: 700;
+}
+.analysis-result ul,
+.analysis-result ol {
+  margin: 0.5rem 0 0.75rem 1.25rem;
+}
+.analysis-result li {
+  margin-bottom: 0.4rem;
+}
+.analysis-result code {
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+}
+.analysis-result pre code {
+  display: block;
+  padding: 0.75rem;
+  overflow: auto;
+}
+.analysis-result a {
+  color: #2563eb; /* tailwind blue-600 */
+  text-decoration: underline;
+}
+.analysis-result a:hover {
+  color: #1d4ed8; /* blue-700 */
+}
+.analysis-result {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 /* Configuração para usar a fonte Inter */
 

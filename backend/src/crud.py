@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, selectinload
+﻿from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
 from . import models, schemas
 from passlib.context import CryptContext
@@ -35,15 +35,27 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-# --- Licitações ---
+# --- LicitaÃ§Ãµes ---
 def get_licitacoes(
-    db: Session, skip: int = 0, limit: int = 100, q: str | None = None, uf: str | None = None
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    q: str | None = None,
+    uf: str | None = None,
+    has_analise: bool | None = None,
 ):
     query = db.query(models.Licitacao).options(selectinload(models.Licitacao.analises))
     if q:
         query = query.filter(models.Licitacao.objeto_compra.ilike(f"%{q}%"))
     if uf:
         query = query.filter(models.Licitacao.uf == uf.upper())
+    if has_analise is not None:
+        query = query.outerjoin(models.Analise)
+        if has_analise:
+            query = query.filter(models.Analise.id.isnot(None))
+        else:
+            query = query.filter(models.Analise.id.is_(None))
+        query = query.distinct(models.Licitacao.id)
     return query.order_by(models.Licitacao.data_publicacao_pncp.desc()).offset(skip).limit(limit).all()
 
 
@@ -57,7 +69,7 @@ def get_licitacao(db: Session, licitacao_id: int) -> models.Licitacao | None:
 
 
 def get_licitacao_count_by_uf(db: Session):
-    """Conta o número de licitações por UF, retornando as que têm UF definida."""
+    """Conta o nÃºmero de licitaÃ§Ãµes por UF, retornando as que tÃªm UF definida."""
     return (
         db.query(models.Licitacao.uf, func.count(models.Licitacao.id).label("total"))
         .filter(models.Licitacao.uf != None)
@@ -67,7 +79,53 @@ def get_licitacao_count_by_uf(db: Session):
     )
 
 
-# --- Análises & Anexos ---
+
+
+def get_total_analises(db: Session) -> int:
+    return db.query(func.count(models.Analise.id)).scalar() or 0
+
+# --- AnÃ¡lises & Anexos ---
+
+def create_licitacao(db: Session, licitacao: schemas.LicitacaoCreate) -> models.Licitacao:
+    """Cria ou atualiza uma licitação com base no numero_controle_pncp."""
+    dados = licitacao.model_dump(exclude_unset=True)
+    numero = dados.get("numero_controle_pncp")
+    query = db.query(models.Licitacao)
+    if numero:
+        existente = query.filter(models.Licitacao.numero_controle_pncp == numero).first()
+    else:
+        existente = None
+
+    if existente:
+        for campo, valor in dados.items():
+            setattr(existente, campo, valor)
+        db.add(existente)
+        db.commit()
+        db.refresh(existente)
+        return existente
+
+    nova = models.Licitacao(**dados)
+    db.add(nova)
+    db.commit()
+    db.refresh(nova)
+    return nova
+
+
+def delete_licitacao_completa(db: Session, licitacao_id: int) -> bool:
+    """Remove licitação e dependências (análises, anexos, embeddings)."""
+    exists = db.query(models.Licitacao.id).filter(models.Licitacao.id == licitacao_id).scalar()
+    if not exists:
+        return False
+
+    db.query(models.EditalEmbedding).filter(models.EditalEmbedding.licitacao_id == licitacao_id).delete(synchronize_session=False)
+    db.query(models.Anexo).filter(models.Anexo.licitacao_id == licitacao_id).delete(synchronize_session=False)
+    db.query(models.Analise).filter(models.Analise.licitacao_id == licitacao_id).delete(synchronize_session=False)
+
+    deleted = db.query(models.Licitacao).filter(models.Licitacao.id == licitacao_id).delete(synchronize_session=False)
+    db.commit()
+    return bool(deleted)
+
+
 def create_licitacao_manual(
     db: Session,
     numero_controle_pncp: str,
@@ -133,7 +191,7 @@ def create_anexo(
 def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
     lic = get_licitacao(db, licitacao_id)
     if lic is None:
-        raise ValueError(f"Licitacao {licitacao_id} não encontrada")
+        raise ValueError(f"Licitacao {licitacao_id} nÃ£o encontrada")
     analise = models.Analise(status="Pendente", licitacao_id=licitacao_id)
     db.add(analise)
     db.commit()
@@ -149,7 +207,7 @@ def get_analise(db: Session, analise_id: int) -> models.Analise | None:
 def update_analise(
     db: Session, analise_id: int, status: str | None = None, resultado: str | None = None
 ) -> models.Analise | None:
-    """Atualiza uma análise, permitindo alterar status e/ou resultado."""
+    """Atualiza uma anÃ¡lise, permitindo alterar status e/ou resultado."""
     analise = get_analise(db, analise_id)
     if not analise:
         return None
@@ -179,7 +237,7 @@ def update_analise_status(db: Session, analise_id: int, status: str) -> models.A
     return analise
 
 
-def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: str = "Concluído") -> models.Analise | None:
+def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: str = "Concluido") -> models.Analise | None:
     analise = get_analise(db, analise_id)
     if not analise:
         return None
@@ -190,4 +248,10 @@ def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: 
     db.commit()
     db.refresh(analise)
     return analise
+
+
+
+
+
+
 
