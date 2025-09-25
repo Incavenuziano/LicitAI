@@ -27,6 +27,29 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
     fetchData();
   }, [params.id]);
 
+  const analise = licitacao?.analises?.[0] ?? null;
+  const sanitizedAnalysis = useMemo(() => {
+    if (!analise?.resultado) return '';
+    return DOMPurify.sanitize(analise.resultado);
+  }, [analise?.resultado]);
+
+  const dataEncerramento = useMemo(() => {
+    const rawDate = licitacao?.data_encerramento_proposta;
+    if (!rawDate) return 'N/A';
+    const dt = new Date(rawDate);
+    return Number.isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleDateString('pt-BR');
+  }, [licitacao?.data_encerramento_proposta]);
+
+  const valorEstimado = useMemo(() => {
+    const raw = licitacao?.valor_total_estimado;
+    if (raw === null || raw === undefined) return 'N/A';
+    if (typeof raw === 'string' && raw.trim() === '') return 'N/A';
+    const num = Number(raw);
+    return Number.isFinite(num)
+      ? num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      : 'N/A';
+  }, [licitacao?.valor_total_estimado]);
+
   if (loading) {
     return <div className="p-6">Carregando detalhes da licitacao...</div>;
   }
@@ -34,28 +57,6 @@ export default function LicitacaoDetailPage({ params }: { params: { id: string }
   if (!licitacao) {
     return <div className="p-6">Licitacao nao encontrada.</div>;
   }
-
-  const analise = licitacao.analises && licitacao.analises[0];
-  const sanitizedAnalysis = useMemo(() => {
-    if (!analise?.resultado) return '';
-    return DOMPurify.sanitize(analise.resultado);
-  }, [analise?.resultado]);
-
-  const dataEncerramento = useMemo(() => {
-    if (!licitacao.data_encerramento_proposta) return 'N/A';
-    const dt = new Date(licitacao.data_encerramento_proposta);
-    return Number.isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleDateString('pt-BR');
-  }, [licitacao.data_encerramento_proposta]);
-
-  const valorEstimado = useMemo(() => {
-    const raw = licitacao.valor_total_estimado;
-    if (raw === null || raw === undefined) return 'N/A';
-    if (typeof raw === 'string' && raw.trim() === '') return 'N/A';
-    const num = Number(raw);
-    return Number.isFinite(num)
-      ? num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-      : 'N/A';
-  }, [licitacao.valor_total_estimado]);
 
   const ufDisplay = licitacao.uf ?? 'N/A';
 

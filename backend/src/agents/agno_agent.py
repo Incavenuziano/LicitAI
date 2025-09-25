@@ -7,16 +7,15 @@ try:
     from agno.agent import Agent  # type: ignore
     from agno.models.google import Gemini  # type: ignore
     from agno.tools.decorator import tool  # type: ignore
-    from agno.storage.sqlite import SqliteStorage  # type: ignore
-    from agno.memory.v2.memory import Memory  # type: ignore
-    from agno.memory.v2.db.sqlite import SqliteMemoryDb  # type: ignore
-except Exception:
+    from agno.db.sqlite import SqliteDb  # type: ignore
+except Exception as exc:
+    import sys, traceback
+    print('[agno_agent] Falha ao importar dependencias Agno:', exc, file=sys.stderr)
+    traceback.print_exc()
     Agent = None  # type: ignore
     Gemini = None  # type: ignore
     tool = None  # type: ignore
-    SqliteStorage = None  # type: ignore
-    Memory = None  # type: ignore
-    SqliteMemoryDb = None  # type: ignore
+    SqliteDb = None  # type: ignore
 
 from ..agents.agente_busca import consultar_licitacoes_publicadas
 from ..agents.agente_tratamento import salvar_licitacoes
@@ -286,9 +285,7 @@ def make_agent() -> Agent:
         Agent is None
         or Gemini is None
         or tool is None
-        or SqliteStorage is None
-        or Memory is None
-        or SqliteMemoryDb is None
+        or SqliteDb is None
     ):
         raise ImportError(
             "Dependencias do Agno nao encontradas. Instale: pip install agno google-generativeai"
@@ -302,36 +299,25 @@ def make_agent() -> Agent:
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     tmp_dir = os.path.join(base_dir, "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
-    storage = SqliteStorage(
-        table_name="licitai_agent",
-        db_file=os.path.join(tmp_dir, "agents.db"),
-        auto_upgrade_schema=True,
-    )
-    memory_db = SqliteMemoryDb(
-        table_name="memory",
-        db_file=os.path.join(tmp_dir, "memory.db"),
-    )
-    memory = Memory(db=memory_db)
+    agent_db = SqliteDb(db_file=os.path.join(tmp_dir, "agents.db"))
 
     return Agent(
         name="LicitAI Agent",
-        agent_id="licitai-agent",
+        id="licitai-agent",
         model=model,
-        storage=storage,
-        memory=memory,
+        db=agent_db,
         tools=[
             buscar_licitacoes,
             salvar_licitacoes_json,
-            buscar_e_baixar_editais, # <-- FERRAMENTA ADICIONADA
+            buscar_e_baixar_editais,  # <-- FERRAMENTA ADICIONADA
             anexos_pncp,
             anexos_comprasnet,
             criar_e_rodar_analise,
         ],
-        show_tool_calls=True,
-        enable_user_memories=True,
-        add_history_to_messages=True,
-        num_history_responses=5,
-        add_datetime_to_instructions=True,
+        enable_agentic_memory=True,
+        add_history_to_context=True,
+        num_history_runs=5,
+        add_datetime_to_context=True,
         markdown=True,
     )
 
@@ -354,10 +340,13 @@ nas orientações do Tribunal de Contas da União (TCU), e nas melhores prática
 instrução, julgamento e fiscalização de contratos administrativos.
 
 Contexto da Análise:
-Será analisada uma seção específica de um edital de licitação (ou o edital completo).
+Será analisado um edital completo e cada uma das seções específica de um edital.
 A sua tarefa é examinar o conteúdo apresentado e emitir uma avaliação técnico-jurídica com base na
 conformidade legal, nos princípios constitucionais, nas boas práticas administrativas e nos
 entendimentos do TCU.
+Inicie levantando as principais informações do edital, como órgão responsável, objeto, valor estimado,
+modalidade, critérios de julgamento, requisitos de habilitação, prazos, sanções e recursos
+Em toda sua análise, faça as verificações pertinentes e traga referências objetivas ao edital sobre cada ponto.
 
 Sua análise deve considerar os seguintes eixos normativos e operacionais:
 I. Conformidade Legal (Lei nº 14.133/2021) – prazos, procedimentos, publicações, contraditório, ampla defesa, isonomia, interesse público.
@@ -372,13 +361,23 @@ VI. Recomendações Técnicas – melhorias para legalidade, economicidade, efic
 Formato de Resposta Esperado:
 ## [TÍTULO DA SEÇÃO ANALISADA]
 
-### 1. Conformidade Legal
+### 1. Informações Gerais do Edital
+- Órgão Responsável: …
+- Objeto: …
+- Valor Estimado: …
+- Data de encerramento das propostas: …
+- Modalidade: …
+- Critério de Julgamento: …
+- Requisitos de Habilitação: …
+- Prazos Principais: …
+
+### 2. Conformidade Legal
 [✔️ ou ⚠️] Análise com citação de artigos pertinentes da Lei nº 14.133/21.
 
-### 2. Princípios da Administração Pública
+### 3. Princípios da Administração Pública
 [✔️ ou ⚠️] Indicação dos princípios envolvidos e eventuais violações.
 
-### 3. Checklist Técnico
+### 4. Checklist Técnico
 | Item | Avaliação | Observação técnica |
 |---|---|---|
 | Objeto definido | ✔️/⚠️/❌ | … |
@@ -392,13 +391,13 @@ Formato de Resposta Esperado:
 | Impugnação/recursos | ✔️/⚠️/❌ | … |
 | PNCP | ✔️/⚠️/❌ | … |
 
-### 4. Riscos Jurídicos Identificados
+### 5. Riscos Jurídicos Identificados
 - …
 
-### 5. Jurisprudência Aplicável
+### 6. Jurisprudência Aplicável
 > Cite entendimentos do TCU pertinentes.
 
-### 6. Recomendações Técnicas
+### 7. Recomendações Técnicas
 - …
 
 Observações Finais:
