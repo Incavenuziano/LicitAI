@@ -35,6 +35,46 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+
+def update_licitacao_fields_if_empty(
+    db: Session, licitacao_id: int, **fields
+) -> models.Licitacao | None:
+    """Atualiza campos de uma licitacao somente quando estiverem vazios ou com placeholders."""
+    lic = db.query(models.Licitacao).filter(models.Licitacao.id == licitacao_id).first()
+    if not lic:
+        return None
+
+    placeholders: dict[str, set[str]] = {
+        "objeto_compra": {"upload manual de edital"},
+        "orgao_entidade_nome": set(),
+    }
+
+    changed = False
+    for attr, value in fields.items():
+        if value is None or not hasattr(lic, attr):
+            continue
+
+        current = getattr(lic, attr)
+        is_empty = current is None
+        if isinstance(current, str):
+            normalized = current.strip().lower()
+            placeholder_values = placeholders.get(attr, set())
+            is_empty = (not normalized) or (normalized in placeholder_values)
+        if not is_empty:
+            continue
+
+        setattr(lic, attr, value)
+        changed = True
+
+    if changed:
+        db.add(lic)
+        db.commit()
+        db.refresh(lic)
+    return lic
+
+
+
+
 # --- LicitaÃ§Ãµes ---
 def get_licitacoes(
     db: Session,

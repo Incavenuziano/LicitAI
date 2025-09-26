@@ -1,6 +1,7 @@
 import logging
 import traceback
 from datetime import datetime
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -152,6 +153,114 @@ def _parse_date_br(value: str) -> Optional[datetime]:
         except Exception:
             continue
     return None
+
+
+def _normalize_field_key(label: str) -> str:
+    import re
+    import unicodedata
+
+    label = unicodedata.normalize("NFKD", label or "")
+    label = "".join(ch for ch in label if not unicodedata.combining(ch))
+    label = label.lower()
+    label = re.sub(r"[^a-z0-9]+", " ", label)
+    return label.strip()
+
+
+FIELD_KEYWORDS: Dict[str, Tuple[str, ...]] = {
+    "orgao_entidade_nome": (
+        "orgao responsavel",
+        "orgao",
+        "orgao entidade",
+        "entidade contratante",
+        "entidade"
+    ),
+    "objeto_compra": (
+        "objeto",
+        "descricao do objeto",
+        "objeto principal"
+    ),
+    "valor_total_estimado": (
+        "valor estimado",
+        "valor total estimado",
+        "valor global",
+        "valor maximo"
+    ),
+    "data_encerramento_proposta": (
+        "data de encerramento",
+        "data encerramento",
+        "prazo final",
+        "data limite"
+    ),
+    "modalidade_nome": ("modalidade",),
+    "uf": ("uf", "estado"),
+    "municipio_nome": ("municipio", "cidade"),
+}
+
+
+def _extract_structured_data_from_analysis(markdown: str) -> Dict[str, Any]:
+    if not markdown:
+        return {}
+
+    lines = markdown.splitlines()
+    section: List[str] = []
+    capture = False
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        normalized = _normalize_field_key(stripped)
+        if not capture:
+            if "informacoes gerais do edital" in normalized or normalized.startswith("### 1 informacoes gerais"):
+                capture = True
+            continue
+        if stripped.startswith("### "):
+            break
+        section.append(stripped)
+
+    if not section:
+        return {}
+
+    results: Dict[str, Any] = {}
+    for line in section:
+        clean = line.lstrip('-*•').strip()
+        if not clean:
+            continue
+        if set(clean) <= {"|", "-"}:
+            continue
+        if ':' in clean:
+            key, value = clean.split(':', 1)
+        elif '–' in clean:
+            key, value = clean.split('–', 1)
+        else:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            continue
+
+        normalized_key = _normalize_field_key(key)
+        target_field = None
+        for field, keywords in FIELD_KEYWORDS.items():
+            if any(keyword in normalized_key for keyword in keywords):
+                target_field = field
+                break
+        if not target_field:
+            continue
+
+        if target_field == "valor_total_estimado":
+            amount = _parse_money_br(value)
+            if amount is not None:
+                results[target_field] = Decimal(f"{amount:.2f}")
+        elif target_field == "data_encerramento_proposta":
+            parsed = _parse_date_br(value)
+            if parsed:
+                results[target_field] = parsed
+        elif target_field == "uf":
+            results[target_field] = value[:2].upper()
+        else:
+            results[target_field] = value
+
+    return results
 
 
 def _extract_basic_metadata(text: str) -> Dict[str, Any]:
@@ -456,7 +565,7 @@ def _prepare_text_from_pdf(anexo_path: Path) -> Optional[str]:
     return texto or None
 
 
-def _generate_complete_analysis(licitacao: models.Licitacao, texto: str) -> str:
+def _generate_complete_analysis(licitacao: models.Licitacao, texto: str) -> Tuple[str, Dict[str, Any]]:
     if not texto:
         raise ValueError("Nenhum texto extraido para a analise.")
     if run_edital_analysis is None:
@@ -467,14 +576,26 @@ def _generate_complete_analysis(licitacao: models.Licitacao, texto: str) -> str:
     if not isinstance(resultado_md, str):
         resultado_md = str(resultado_md)
 
+    analysis_fields = _extract_structured_data_from_analysis(resultado_md)
+
+
     meta = _extract_basic_metadata(texto)
+    if meta.get("objeto_compra") and "objeto_compra" not in analysis_fields:
+        analysis_fields["objeto_compra"] = meta["objeto_compra"]
+    if meta.get("orgao_entidade_nome") and "orgao_entidade_nome" not in analysis_fields:
+        analysis_fields["orgao_entidade_nome"] = meta["orgao_entidade_nome"]
+    if meta.get("data_encerramento_proposta") and "data_encerramento_proposta" not in analysis_fields:
+        analysis_fields["data_encerramento_proposta"] = meta["data_encerramento_proposta"]
+
     try:
         itens = _extract_items_from_text(texto)
     except Exception:
         itens = []
 
     summary_md = _build_edital_summary_md(licitacao, meta, itens)
-    return _compose_final_html(summary_md, resultado_md)
+    final_html = _compose_final_html(summary_md, resultado_md)
+    logger.info("[analysis] structured fields: %s", analysis_fields)
+    return final_html, analysis_fields
 
 
 def run_analysis(analise_id: int) -> None:
@@ -503,8 +624,14 @@ def run_analysis(analise_id: int) -> None:
             crud.update_analise(db, analise_id, status="Erro", resultado="Nao foi possivel extrair texto do edital associado.")
             return
 
-        resultado_html = _generate_complete_analysis(lic, texto)
+        resultado_html, analysis_fields = _generate_complete_analysis(lic, texto)
         crud.set_analise_resultado(db, analise_id, resultado_html, status="Concluido")
+        if analysis_fields:
+            logger.info("[run_analysis] updating licitacao %s with %s", lic.id, analysis_fields)
+            try:
+                crud.update_licitacao_fields_if_empty(db, lic.id, **analysis_fields)
+            except Exception:
+                logger.warning("[run_analysis] nao foi possivel atualizar campos extraidos", exc_info=True)
         logger.info(f"[run_analysis] concluido analise_id={analise_id}")
     except Exception:
         logger.error(f"[run_analysis] falha analise_id={analise_id}", exc_info=True)
@@ -538,8 +665,14 @@ def run_analysis_from_file(analise_id: int, file_path: str) -> None:
             crud.update_analise(db, analise_id, status="Erro", resultado="Nao foi possivel extrair texto do arquivo enviado.")
             return
 
-        resultado_html = _generate_complete_analysis(lic, texto)
+        resultado_html, analysis_fields = _generate_complete_analysis(lic, texto)
         crud.set_analise_resultado(db, analise_id, resultado_html, status="Concluido")
+        if analysis_fields:
+            logger.info("[run_analysis_from_file] updating licitacao %s com %s", lic.id, analysis_fields)
+            try:
+                crud.update_licitacao_fields_if_empty(db, lic.id, **analysis_fields)
+            except Exception:
+                logger.warning("[run_analysis_from_file] nao foi possivel atualizar campos extraidos", exc_info=True)
         logger.info(f"[run_analysis_from_file] concluido analise_id={analise_id}")
     except Exception:
         logger.error(f"[run_analysis_from_file] falha analise_id={analise_id}", exc_info=True)
