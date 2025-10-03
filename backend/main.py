@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -237,7 +237,7 @@ async def pesquisa_precos_por_item(
 ):
     """Pesquisa preÃ§os por descriÃ§Ã£o de item consultando fontes pÃºblicas.
 
-    - fonte: "comprasgov" | "pncp" | "ambas"
+    - fonte: "comprasgov" | "pncp" | "ambas" | "precos_praticados" | "todas"
     - limit_ids: limite de IDs de contratos a considerar (fonte comprasgov)
     """
     try:
@@ -356,6 +356,43 @@ def oportunidades_ativas(payload: OportunidadesPayload):
         return parsed
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Falha na consulta de oportunidades: {e}")
+
+
+@app.websocket("/ws/busca-ampla")
+async def websocket_busca_ampla(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        # 1. Recebe os parÃ¢metros de busca do cliente
+        payload_data = await websocket.receive_json()
+        payload = OportunidadesPayload(**payload_data)
+
+        # 2. Importa e chama a funÃ§Ã£o de busca com os parÃ¢metros recebidos
+        from src.agents.agente_busca import buscar_oportunidades_ativas_amplo_ws
+        
+        await buscar_oportunidades_ativas_amplo_ws(
+            websocket=websocket,
+            total_days=payload.total_days,
+            step_days=payload.step_days,
+            ufs=payload.ufs,
+            modal_codes=payload.modal_codes,
+            page_limit=payload.page_limit,
+            tamanho_pagina=payload.tamanho_pagina,
+            data_fim_ref=payload.data_fim_ref,
+        )
+
+    except WebSocketDisconnect:
+        logger.info("[websocket] Cliente desconectado.")
+    except Exception as e:
+        logger.error(f"[websocket] Erro: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": f"Ocorreu um erro no servidor: {e}"})
+        except Exception:
+            pass  # Cliente pode jÃ¡ ter desconectado
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/licitacoes/salvar")

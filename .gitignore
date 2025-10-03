@@ -46,3 +46,6 @@ temp_*
 frontend/public/.well-known/
 
 agno-temp/
+!backend/src/
+!backend/src/services/
+!backend/src/services/pncp_pipeline.py

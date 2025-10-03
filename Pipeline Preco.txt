@@ -1,0 +1,310 @@
+Claro! Vou te mostrar, passo a passo, **como faço em Python** para localizar e abrir **anexos do PNCP** (e, quando preciso, do Comprasnet/gov.br compras) até chegar nos **preços publicados**. Trago uma receita “de ponta a ponta” com trechos de código prontos para você adaptar.
+
+> Observação importante: os portais às vezes limitam requisições (HTTP 429) ou mudam detalhes. Sempre valide os endpoints na documentação oficial (menu “API”/“Swagger” do PNCP) e ajuste headers/pausas entre requisições.
+
+---
+
+# Visão geral do pipeline
+
+1. **Definir o(s) item(ns) que você quer**
+
+   * Filtro textual: `"insulina", "recombinante", "NPH", "Regular", "100 UI/mL", "100 U/ml", "frasco 10 mL", "caneta 3 mL"`
+   * Intervalo de datas, UF, esfera (municipal/estadual/federal), modalidade (pregão/dispensa/ARP).
+
+2. **Localizar a compra**
+
+   * Pelas APIs/consulta do PNCP (busca por palavras-chave) **ou** partindo de dados conhecidos (CNPJ do órgão + ano + número da compra).
+
+3. **Listar os anexos** daquela compra (planilhas, PDFs, atas/contratos, mapas de preços, etc.).
+
+4. **Baixar o(s) anexo(s)** para a máquina local.
+
+5. **Ler o conteúdo** (PDF, XLSX/CSV) e **extrair**: item, apresentação, quantidade, **preço unitário**, e **valor total** (ou calcular total = quantidade × unitário quando o documento mostrar os dois primeiros).
+
+6. **Normalizar e guardar** em um dataframe/tabela (e opcionalmente salvar *.xlsx*).
+
+---
+
+# Código de referência (PNCP)
+
+## 0) Dependências
+
+```python
+!pip install requests pdfplumber pandas openpyxl tenacity
+# Para planilhas antigas: xlrd
+# Para PDFs tabulares complexos: camelot-py[cv] (requer Java ou Ghostscript em alguns SOs)
+```
+
+## 1) Utilitários (sessão HTTP, backoff e limpeza de números)
+
+```python
+import re, time, pathlib
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+import pandas as pd
+import pdfplumber
+
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (compatible; consulta-pncp/1.0; +contato@exemplo.org)"
+})
+TIMEOUT = 30
+
+def br_to_float(txt: str):
+    """Converte '1.234,56' -> 1234.56; '56,19' -> 56.19"""
+    if txt is None: return None
+    s = re.sub(r"[^\d,.-]", "", str(txt))
+    if s.count(",") == 1 and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif s.count(",") == 1:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return None
+
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=20))
+def GET(url, **kw):
+    r = SESSION.get(url, timeout=kw.pop("timeout", TIMEOUT), **kw)
+    if r.status_code in (429, 503):
+        # dispara retry com backoff
+        raise requests.HTTPError(f"Rate limited: {r.status_code}")
+    r.raise_for_status()
+    return r
+```
+
+## 2) Localizar compras (duas estratégias)
+
+### (A) Quando você JÁ tem CNPJ do órgão + ano + número da compra
+
+Essa é a rota mais direta para achar anexos.
+
+* **Lista de anexos**:
+  `https://pncp.gov.br/pncp-api/v1/orgaos/{CNPJ}/compras/{ANO}/{NUMERO}/arquivos`
+  (Esse endpoint retorna metadados dos arquivos. Com o **id**/nome retornado, você monta a URL de **download**.)
+
+```python
+from urllib.parse import quote
+
+def listar_anexos_compra(cnpj: str, ano: int, numero: int):
+    base = "https://pncp.gov.br/pncp-api/v1"
+    url = f"{base}/orgaos/{quote(cnpj)}/compras/{ano}/{numero}/arquivos"
+    r = GET(url)
+    return r.json()  # lista de dicts com id/nome/mimeType etc.
+
+def baixar_anexo(cnpj: str, ano: int, numero: int, arquivo_id: int, destino_dir="downloads"):
+    base = "https://pncp.gov.br/pncp-api/v1"
+    url = f"{base}/orgaos/{cnpj}/compras/{ano}/{numero}/arquivos/{arquivo_id}"
+    pathlib.Path(destino_dir).mkdir(parents=True, exist_ok=True)
+    arq = GET(url)
+    # tenta pegar um nome amigável se o servidor enviar Content-Disposition
+    fname = f"{cnpj}_{ano}_{numero}_{arquivo_id}.bin"
+    cd = arq.headers.get("Content-Disposition", "")
+    m = re.search(r'filename\*?="?([^";]+)"?', cd)
+    if m:
+        fname = m.group(1)
+    path = pathlib.Path(destino_dir) / fname
+    path.write_bytes(arq.content)
+    return str(path)
+```
+
+### (B) Quando você SÓ tem palavra-chave (ex.: “insulina 100 UI/mL”)
+
+Use a **consulta pública** do PNCP por texto/UF/intervalo. A documentação oficial mostra os parâmetros disponíveis (palavras-chave, data, UF, modalidade etc.). A ideia é:
+
+1. Chamar o endpoint de **consulta** (busca), paginando.
+2. Filtrar os resultados por UF e por descrições que casem com seus termos (NPH/Regular/100 UI/mL/frasco 10 mL/caneta 3 mL).
+3. Para cada resultado, você terá CNPJ/ano/número e então cai no passo 2(A) para listar e baixar anexos.
+
+> Como a rota de consulta pode variar, localize-a no **Swagger do PNCP** (“Consulta de Compras”). O padrão é receber JSON com lista de compras e identificadores (CNPJ/ano/número).
+
+Pseudo-exemplo (ajuste a URL/parâmetros conforme o Swagger atual):
+
+```python
+def buscar_compras_por_texto(q: str, uf: str=None, pagina: int=1, tamanho: int=50, data_ini=None, data_fim=None):
+    # Exemplo ilustrativo. Confirme parâmetros no Swagger do PNCP.
+    base = "https://pncp.gov.br/pncp-api/v1/consulta/compras"
+    params = {
+        "termo": q, "pagina": pagina, "tamanho": tamanho
+        # "uf": uf, "dataInicial": data_ini, "dataFinal": data_fim, ...
+    }
+    r = GET(base, params=params)
+    return r.json()
+```
+
+---
+
+## 3) Encontrar anexos com **preço publicado**
+
+Depois de listar os anexos, costumo baixar **apenas** os que têm nomes sugestivos: `"Planilha de preços"`, `"Mapa de Preços"`, `"Anexo I"`, `"Proposta"`, `"Contrato"`, `"Ata de Registro de Preços"`, `"Resultado do Pregão"`. Em PDFs, busco os termos “NPH”, “Regular”, “100”, “UI/mL”, “frasco”, “ampola”, “3 mL”.
+
+```python
+def parece_interessante(nome: str):
+    nome_l = (nome or "").lower()
+    gatilhos = ["planilha", "preço", "precos", "mapa", "proposta", "anexo", "contrato", "ata", "resultado"]
+    return any(g in nome_l for g in gatilhos)
+```
+
+---
+
+## 4) Extrair dados dos anexos
+
+### 4.1 PDF (pdfplumber + regex)
+
+```python
+INSULINA_RE = re.compile(
+    r"insulina.*?(nph|regular).*?(100\s*([uú]i|u)\s*/?\s*ml)",
+    re.IGNORECASE | re.DOTALL
+)
+
+PRECO_RE = re.compile(
+    r"R?\$?\s*([0-9]{1,3}(\.[0-9]{3})*,[0-9]{2})",  # pega 1.234,56 ou 56,19
+    re.IGNORECASE
+)
+
+QUANT_RE = re.compile(
+    r"\b(\d{1,3}(\.\d{3})*|\d+)\s*(un|unid|unidade|unidades|ampola|ampolas|frasco|frascos)\b",
+    re.IGNORECASE
+)
+
+def extrair_de_pdf(caminho_pdf: str):
+    achados = []
+    with pdfplumber.open(caminho_pdf) as pdf:
+        for page in pdf.pages:
+            txt = page.extract_text() or ""
+            if re.search(INSULINA_RE, txt):
+                # procura quantidades e preços próximos (simples; para tabelas complexas, usar camelot)
+                precos = PRECO_RE.findall(txt)
+                quants = QUANT_RE.findall(txt)
+                achados.append({"pagina": page.page_number, "texto": txt, "precos": precos, "quants": quants})
+    return achados
+```
+
+### 4.2 Planilhas (XLSX/CSV) com pandas
+
+```python
+def extrair_de_xlsx(caminho_xlsx: str):
+    out = []
+    xls = pd.ExcelFile(caminho_xlsx)
+    for sheet in xls.sheet_names:
+        df = xls.parse(sheet)
+        # tenta padronizar colunas
+        cols = {c.lower(): c for c in df.columns}
+        # heurísticas de nomes:
+        poss_item = [c for c in df.columns if re.search(r"descri|item", c, re.I)]
+        poss_quant = [c for c in df.columns if re.search(r"qtd|quant", c, re.I)]
+        poss_unit = [c for c in df.columns if re.search(r"unit[aá]rio|preço unit", c, re.I)]
+        poss_total = [c for c in df.columns if re.search(r"total", c, re.I)]
+        for idx, row in df.iterrows():
+            linha_txt = " ".join(str(row.get(c, "")) for c in poss_item)
+            if re.search(INSULINA_RE, str(linha_txt or ""), re.I):
+                item = str(linha_txt).strip() if linha_txt else ""
+                qtd = None
+                for c in poss_quant:
+                    qtd = row.get(c)
+                    if pd.notna(qtd): break
+                vu = None
+                for c in poss_unit:
+                    vu = br_to_float(row.get(c))
+                    if vu is not None: break
+                vt = None
+                for c in poss_total:
+                    vt = br_to_float(row.get(c))
+                    if vt is not None: break
+                if vt is None and (qtd is not None) and (vu is not None):
+                    try:
+                        vt = float(str(qtd).replace(".","").replace(",",".")) * vu
+                    except:
+                        pass
+                out.append({"sheet": sheet, "item": item, "quantidade": qtd, "valor_unit": vu, "valor_total": vt})
+    return pd.DataFrame(out)
+```
+
+---
+
+## 5) Amarrando tudo: de “CNPJ/ano/número” → tabela consolidada
+
+```python
+def processar_compra(cnpj: str, ano: int, numero: int, uf: str, esfera: str,
+                     orgao: str, municipio_uf: str):
+    anexos = listar_anexos_compra(cnpj, ano, numero)
+    linhas = []
+    for a in anexos:
+        nome = a.get("nome") or a.get("fileName") or ""
+        if not parece_interessante(nome):
+            continue
+        caminho = baixar_anexo(cnpj, ano, numero, a["id"])
+        if caminho.lower().endswith(".pdf"):
+            blocos = extrair_de_pdf(caminho)
+            # se o PDF for tabular e pdfplumber não bastar, use camelot
+            for b in blocos:
+                # heurística: pegar o primeiro preço e a primeira quantidade encontrados
+                precos = [br_to_float(p[0]) for p in b["precos"] if br_to_float(p[0]) is not None]
+                quant  = None
+                for q in b["quants"]:
+                    qnum = br_to_float(q[0])
+                    if qnum is not None:
+                        quant = qnum
+                        break
+                vu = precos[0] if precos else None
+                vt = (quant * vu) if (quant and vu) else None
+                if vu is not None:
+                    linhas.append([uf, esfera, orgao, municipio_uf, "Anexo (PDF)", f"{ano}/{numero}",
+                                   None, "Insulina humana (NPH/Regular) 100 UI/mL", None,
+                                   quant, "un.", vu, vt,
+                                   f"https://pncp.gov.br/pncp-api/v1/orgaos/{cnpj}/compras/{ano}/{numero}/arquivos/{a['id']}",
+                                   nome])
+        elif any(caminho.lower().endswith(ext) for ext in [".xlsx", ".xls", ".csv"]):
+            if caminho.lower().endswith(".csv"):
+                df = pd.read_csv(caminho, encoding="latin-1")
+            else:
+                df = extrair_de_xlsx(caminho)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                for _, r in df.iterrows():
+                    if pd.notna(r.get("valor_unit")):
+                        linhas.append([uf, esfera, orgao, municipio_uf, "Anexo (planilha)", f"{ano}/{numero}",
+                                       None, r.get("item"), None,
+                                       r.get("quantidade"), "un.", r.get("valor_unit"), r.get("valor_total"),
+                                       f"https://pncp.gov.br/pncp-api/v1/orgaos/{cnpj}/compras/{ano}/{numero}/arquivos/{a['id']}",
+                                       nome])
+    cols = ["UF","Esfera","Órgão/Entidade","Município/UF","Modalidade/Peça","Processo/Referência","Data (quando visível)",
+            "Item (resumo)","Apresentação","Quantidade","Unidade","Preço unitário (R$)","Valor total (R$)",
+            "Fonte (link PNCP/Comprasnet)","Observações"]
+    return pd.DataFrame(linhas, columns=cols)
+```
+
+Uso:
+
+```python
+# Exemplo (substitua pelos identificadores reais da compra que você quer):
+df_rs = processar_compra(
+    cnpj="88131164000107", ano=2024, numero=235,
+    uf="RS", esfera="Municipal", orgao="Prefeitura de Uruguaiana", municipio_uf="Uruguaiana/RS"
+)
+df_rs.head()
+```
+
+---
+
+# E o **Comprasnet / gov.br/compras**?
+
+* Muitas compras federais e estaduais estão espelhadas no PNCP; mas às vezes **o anexo acessível** está no **gov.br/compras**.
+* Para **links públicos diretos**, você consegue baixar como no PNCP (com `requests`).
+* **Se pedir login** (cookies/sessão), **não dá** para automatizar com `requests` simples; aí você precisa:
+
+  * Baixar manualmente os PDFs/planilhas e **processar localmente** com o mesmo pipeline de extração (pdfplumber/pandas), **ou**
+  * Usar um **navegador automatizado** (ex.: Playwright/Selenium) com sessão autenticada — mas isso envolve aceitar termos do portal e arcar com a complexidade de login/2FA. Para auditoria/reprodutibilidade, prefira baixar manualmente e **guardar o link público**.
+
+---
+
+# Boas práticas para **auditabilidade**
+
+* **Guarde o link exato** do anexo usado na coluna “Fonte”.
+* **Mantenha o arquivo baixado** (hash SHA-256 ajuda a provar integridade).
+* **Salve a data/hora** da coleta.
+* **Não preencha valores** se o PDF/planilha **não** mostrar preço (ex.: “sigiloso”).
+* Se calcular total (qtd × unit.), **documente** que foi cálculo (e a página/linha do anexo onde a qtd e o unitário aparecem).
+
+---
+
+Se quiser, me passe **um ou dois identificadores reais** (CNPJ + ano + nº) ou **links de anexos** que você tenha, e eu mostro na prática como o código acima extrai **quantidade, preço unitário e total** desses documentos.

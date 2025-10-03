@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from typing import List, Dict, Any, Optional, Tuple
@@ -7,6 +7,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .. import models, crud
+from ..services.pncp_pipeline import PrecoDocumento, coletar_precos_normalizados
+from ..services.precos_praticados import ComprasGovPrecoClient, consultar_material_precos
 
 
 def _clean_text(s: Optional[str]) -> str:
@@ -17,7 +19,7 @@ def _clean_text(s: Optional[str]) -> str:
 
 def _extract_keywords(texto: str, min_len: int = 4) -> List[str]:
     texto = _clean_text(texto)
-    # remove pontuação simples
+    # remove pontuaÃ§Ã£o simples
     texto = re.sub(r"[.,;:/\\()[\]{}\"']+", " ", texto)
     toks = [t for t in texto.split() if len(t) >= min_len]
     # remove termos muito comuns
@@ -34,7 +36,7 @@ def _extract_keywords(texto: str, min_len: int = 4) -> List[str]:
         "servico",
         "servicos",
         "material",
-        "aquisição",
+        "aquisiÃ§Ã£o",
         "aquisicao",
         "compra",
         "objeto",
@@ -55,11 +57,11 @@ def _similarity(a: List[str], b: List[str]) -> float:
 def find_similares_no_banco(
     db: Session, base: models.Licitacao, top_k: int = 20
 ) -> List[models.Licitacao]:
-    """Retorna licitações semelhantes no banco usando Jaccard de palavras do objeto."""
+    """Retorna licitaÃ§Ãµes semelhantes no banco usando Jaccard de palavras do objeto."""
     base_kw = _extract_keywords(base.objeto_compra or "")
     if not base_kw:
         return []
-    # busca um conjunto razoável de registros (ajuste conforme volume)
+    # busca um conjunto razoÃ¡vel de registros (ajuste conforme volume)
     candidatos = (
         db.query(models.Licitacao)
         .filter(models.Licitacao.id != base.id)
@@ -88,28 +90,35 @@ async def _http_get_json(url: str, params: Dict[str, Any] | None = None, timeout
 async def _tenta_precos_pncp_por_numero_controle(
     numero_controle_pncp: Optional[str],
 ) -> List[float]:
-    """Tenta localizar valores adjudicados/contratados via endpoints públicos do PNCP.
-
-    Heurística: usa o número de controle PNCP se disponível para consultar possíveis
-    endpoints de contratos/itens. O PNCP publica endpoints sob /api/consulta/v1/ ...
-    Como a estrutura pode variar, aqui tentamos alguns caminhos e coletamos valores numéricos
-    que aparentem ser preço vencedor.
-    """
+    """Busca valores no PNCP combinando pipeline de anexos e heuristicas JSON legadas."""
     if not numero_controle_pncp:
         return []
 
+    def _dedupe(values: List[float]) -> List[float]:
+        vistos = set()
+        resultado: List[float] = []
+        for valor in values:
+            try:
+                num = float(valor)
+            except Exception:
+                continue
+            chave = round(num, 2)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            resultado.append(num)
+        return resultado
+
+    coletados: List[float] = []
+
     bases = [
-        # hipotético endpoint de contratos filtrando por número de controle
         ("https://pncp.gov.br/api/consulta/v1/contratos", {"numeroControlePNCP": numero_controle_pncp}),
-        # hipotético endpoint de resultados/itens (quando existir)
         ("https://pncp.gov.br/api/consulta/v1/contratacoes/itens", {"numeroControlePNCP": numero_controle_pncp}),
     ]
-    precos: List[float] = []
     for url, params in bases:
         data = await _http_get_json(url, params=params)
         if not data:
             continue
-        # Varre estrutura tentando encontrar campos de valor
         stack = [data]
         while stack:
             cur = stack.pop()
@@ -118,26 +127,33 @@ async def _tenta_precos_pncp_por_numero_controle(
                     kl = str(k).lower()
                     if isinstance(v, (int, float)) and any(x in kl for x in ["valor", "preco", "price"]):
                         try:
-                            precos.append(float(v))
+                            coletados.append(float(v))
                         except Exception:
                             pass
                     elif isinstance(v, str):
-                        # tenta parsear '12345,67' ou '12345.67'
                         if any(x in kl for x in ["valor", "preco", "price"]):
                             m = re.findall(r"\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", v)
                             for s in m:
                                 try:
                                     s2 = s.replace(".", "").replace(",", ".")
-                                    precos.append(float(s2))
+                                    coletados.append(float(s2))
                                 except Exception:
                                     pass
                     elif isinstance(v, (list, dict)):
                         stack.append(v)
             elif isinstance(cur, list):
                 stack.extend(cur)
-    return precos
 
+    try:
+        pipeline_docs: List[PrecoDocumento] = await coletar_precos_normalizados(numero_controle_pncp)
+    except Exception:
+        pipeline_docs = []
+    else:
+        for doc in pipeline_docs:
+            if isinstance(doc.valor, (int, float)):
+                coletados.append(float(doc.valor))
 
+    return _dedupe(coletados)
 def _stats(nums: List[float]) -> Dict[str, Any]:
     if not nums:
         return {"count": 0, "min": None, "max": None, "mean": None, "median": None}
@@ -155,8 +171,6 @@ def _stats(nums: List[float]) -> Dict[str, Any]:
         "mean": total / n,
         "median": med,
     }
-
-
 async def _compras_list_contratos_por_objeto(objeto_query: str, limit_ids: int = 40) -> List[int]:
     """Consulta contratos na API ComprasGov filtrando por 'objeto'. Retorna IDs de contratos.
 
@@ -188,7 +202,7 @@ async def _compras_list_contratos_por_objeto(objeto_query: str, limit_ids: int =
 
 
 async def _compras_precos_itens_do_contrato(contrato_id: int) -> List[float]:
-    """Lista preços unitários/total dos itens do contrato (quando disponíveis)."""
+    """Lista preÃ§os unitÃ¡rios/total dos itens do contrato (quando disponÃ­veis)."""
     url = f"https://compras.dados.gov.br/comprasContratos/doc/contrato/{contrato_id}/itens_compras_contratos"
     prices: List[float] = []
     data = await _http_get_json(url)
@@ -218,7 +232,7 @@ async def _compras_precos_itens_do_contrato(contrato_id: int) -> List[float]:
 
 
 async def _compras_obter_contrato_info(contrato_id: int) -> Optional[Dict[str, Any]]:
-    """Obtém metadados de um contrato: datas (assinatura, vigência), órgão, etc.
+    """ObtÃ©m metadados de um contrato: datas (assinatura, vigÃªncia), Ã³rgÃ£o, etc.
 
     Endpoint esperado: https://compras.dados.gov.br/comprasContratos/doc/contrato/{id}
     """
@@ -230,17 +244,17 @@ async def _compras_obter_contrato_info(contrato_id: int) -> Optional[Dict[str, A
 
 
 async def serie_comprasgov_por_descricao(descricao: str, limit_ids: int = 30) -> List[Dict[str, Any]]:
-    """Gera série (date,value,fonte,contrato_id) a partir de contratos do ComprasGov por termo do objeto.
+    """Gera sÃ©rie (date,value,fonte,contrato_id) a partir de contratos do ComprasGov por termo do objeto.
 
-    - Data usada: data de assinatura do contrato (aproximação)
-    - Valor: preços unitários derivados dos itens do contrato
+    - Data usada: data de assinatura do contrato (aproximaÃ§Ã£o)
+    - Valor: preÃ§os unitÃ¡rios derivados dos itens do contrato
     """
     ids = await _compras_list_contratos_por_objeto(descricao, limit_ids=limit_ids)
     out: List[Dict[str, Any]] = []
     for cid in ids:
         try:
             meta = await _compras_obter_contrato_info(cid)
-            # heurística: procurar campo de data (assinatura/vigência)
+            # heurÃ­stica: procurar campo de data (assinatura/vigÃªncia)
             date_str = None
             if isinstance(meta, dict):
                 for k, v in meta.items():
@@ -248,7 +262,7 @@ async def serie_comprasgov_por_descricao(descricao: str, limit_ids: int = 30) ->
                     if isinstance(v, str) and any(t in kl for t in ["assin", "vigenc", "data"]):
                         date_str = v
                         break
-            # normalizar data para YYYY-MM-DD quando possível
+            # normalizar data para YYYY-MM-DD quando possÃ­vel
             norm_date = None
             if date_str:
                 try:
@@ -285,7 +299,7 @@ async def _pncp_busca_publicacoes(
     uf: Optional[str] = None,
     codigo_modalidade: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Consulta PNCP publicaçoes no intervalo informado.
+    """Consulta PNCP publicaÃ§oes no intervalo informado.
 
     Endpoint: https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao
     Requer dataInicial/dataFinal (yyyyMMdd)
@@ -318,10 +332,10 @@ async def serie_pncp_por_descricao(
     page_limit: int = 10,
     tamanho_pagina: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Gera série (date,value,fonte,numeroControlePNCP) a partir de publicações do PNCP por termo do objeto.
+    """Gera sÃ©rie (date,value,fonte,numeroControlePNCP) a partir de publicaÃ§Ãµes do PNCP por termo do objeto.
 
     - Data usada: dataEncerramentoProposta (preferida) ou dataPublicacaoPncp
-    - Valor: valorTotalEstimado (aproximação do ticket da compra)
+    - Valor: valorTotalEstimado (aproximaÃ§Ã£o do ticket da compra)
     """
     from datetime import datetime, timedelta
 
@@ -396,12 +410,12 @@ async def serie_pncp_por_descricao(
 async def pesquisar_precos_vencedores_similares(
     db: Session, licitacao_id: int, top_k_similares: int = 20, fonte: str = "comprasgov"
 ) -> Dict[str, Any]:
-    """Para uma licitação selecionada, pesquisa licitações semelhantes no banco e
-    tenta obter preços vencedores via PNCP (com heurísticas) para consolidar estatísticas.
+    """Para uma licitaÃ§Ã£o selecionada, pesquisa licitaÃ§Ãµes semelhantes no banco e
+    tenta obter preÃ§os vencedores via PNCP (com heurÃ­sticas) para consolidar estatÃ­sticas.
     """
     base = db.query(models.Licitacao).filter(models.Licitacao.id == licitacao_id).first()
     if not base:
-        return {"error": "Licitação não encontrada"}
+        return {"error": "LicitaÃ§Ã£o nÃ£o encontrada"}
 
     similares = find_similares_no_banco(db, base, top_k=top_k_similares)
     all_prices: List[Tuple[int, float]] = []  # (licitacao_id, price)
@@ -410,7 +424,7 @@ async def pesquisar_precos_vencedores_similares(
         prices_li: List[float] = []
         # Fonte ComprasGov (preferencial)
         if fonte in ("comprasgov", "ambas"):
-            # Monta uma query de objeto simples com palavras-chave da licitação similar
+            # Monta uma query de objeto simples com palavras-chave da licitaÃ§Ã£o similar
             kws = _extract_keywords(li.objeto_compra or "")[:5]
             if kws:
                 query = " ".join(kws)
@@ -442,61 +456,137 @@ async def pesquisar_precos_vencedores_similares(
     }
 
 
+
+
+async def _buscar_precos_praticados(
+    descricao: str,
+    *,
+    limit_itens: int = 5,
+    limit_precos: int = 50,
+) -> List[Dict[str, Any]]:
+    termo = (descricao or "").strip()
+    if not termo:
+        return []
+
+    try:
+        catmat_candidates = {int(match) for match in re.findall(r"\d{5,}", termo)}
+    except ValueError:
+        catmat_candidates = set()
+
+    resultados: List[Dict[str, Any]] = []
+    processados: set[int] = set()
+
+    try:
+        async with ComprasGovPrecoClient() as client:
+            for codigo in catmat_candidates:
+                processados.add(codigo)
+                registros = await consultar_material_precos(codigo, client=client, tamanho_pagina=limit_precos)
+                for registro in registros:
+                    resultados.append({
+                        "fonte": "precos_praticados",
+                        "preco": float(registro.preco_unitario),
+                        "catmat": codigo,
+                        "descricao_item": registro.raw.get("descricaoItem") if registro.raw else None,
+                        "uf": registro.uf,
+                        "municipio": registro.municipio,
+                        "orgao": registro.nome_orgao,
+                        "quantidade": registro.quantidade,
+                        "id_compra": registro.id_compra,
+                    })
+
+            itens = await client.buscar_itens_por_descricao(
+                termo, tamanho_pagina=200, limit=limit_itens
+            )
+            for item in itens:
+                codigo = item.codigo_item
+                if codigo in processados:
+                    continue
+                processados.add(codigo)
+                registros = await consultar_material_precos(codigo, client=client, tamanho_pagina=limit_precos)
+                for registro in registros:
+                    resultados.append({
+                        "fonte": "precos_praticados",
+                        "preco": float(registro.preco_unitario),
+                        "catmat": codigo,
+                        "descricao_item": item.descricao_item,
+                        "uf": registro.uf,
+                        "municipio": registro.municipio,
+                        "orgao": registro.nome_orgao,
+                        "quantidade": registro.quantidade,
+                        "id_compra": registro.id_compra,
+                    })
+    except Exception:
+        return resultados
+
+    return resultados
+
+
 async def pesquisar_precos_por_item(
     db: Session,
     descricao: str,
     limit_ids: int = 30,
     fonte: str = "comprasgov",
 ) -> Dict[str, Any]:
-    """Pesquisa preços por descrição de item, consultando fontes públicas (ComprasGov e/ou PNCP).
-
-    - comprasgov: busca contratos pelo campo objeto e extrai preços de itens.
-    - pncp: como heurística, busca licitações no banco cujo objeto contenha palavras da descrição e tenta extrair
-      preços via APIs públicas do PNCP a partir do número de controle.
-    """
+    """Pesquisa preÃ§os por descriÃ§Ã£o de item em vÃ¡rias fontes pÃºblicas."""
     kws = _extract_keywords(descricao)
     query = " ".join(kws) if kws else (descricao or "").strip()
 
-    all_prices: List[Tuple[str, float]] = []  # (fonte_tag, preco)
+    valores: List[float] = []
+    detalhes: List[Dict[str, Any]] = []
     considerados: Dict[str, int] = {}
 
-    # Fonte ComprasGov
-    if fonte in ("comprasgov", "ambas") and query:
+    def adicionar_preco(fonte_tag: str, valor: Any, extra: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            num = float(valor)
+        except (TypeError, ValueError):
+            return
+        valores.append(num)
+        registro = {"fonte": fonte_tag, "preco": num}
+        if extra:
+            registro.update(extra)
+        detalhes.append(registro)
+
+    if fonte in ("comprasgov", "ambas", "todas") and query:
         contrato_ids = await _compras_list_contratos_por_objeto(query, limit_ids=limit_ids)
         considerados["comprasgov_contratos"] = len(contrato_ids)
         for cid in contrato_ids:
             try:
                 prices = await _compras_precos_itens_do_contrato(cid)
                 for p in prices:
-                    all_prices.append(("comprasgov", float(p)))
+                    adicionar_preco("comprasgov", p, {"contrato_id": cid})
             except Exception:
                 continue
 
-    # Fonte PNCP (heurística baseada em licitações do DB)
-    if fonte in ("pncp", "ambas") and kws:
-        # Busca até 100 licitações locais cujo objeto contenha ao menos uma palavra-chave
-        like_filters = [models.Licitacao.objeto_compra.ilike(f"%{kw}%") for kw in kws]
-        q = db.query(models.Licitacao)
-        # SQLAlchemy não tem OR direto sobre lista sem reduce, mas podemos encadear OR via string fallback
+    if fonte in ("pncp", "ambas", "todas") and kws:
         from sqlalchemy import or_  # type: ignore
-        q = q.filter(or_(*like_filters)).limit(100)
+
+        like_filters = [models.Licitacao.objeto_compra.ilike(f"%{kw}%") for kw in kws]
+        q = db.query(models.Licitacao).filter(or_(*like_filters)).limit(100)
         lics = q.all()
         considerados["pncp_licitacoes"] = len(lics)
         for li in lics:
             try:
                 prices = await _tenta_precos_pncp_por_numero_controle(li.numero_controle_pncp)
                 for p in prices:
-                    all_prices.append(("pncp", float(p)))
+                    adicionar_preco("pncp", p, {"licitacao_id": li.id})
             except Exception:
                 continue
 
-    stats = _stats([p for _, p in all_prices])
-    detalhes = [{"fonte": f, "preco": p} for f, p in all_prices[:1000]]
+    if fonte in ("precos_praticados", "todas"):
+        praticados = await _buscar_precos_praticados(descricao)
+        considerados["precos_praticados_itens"] = len({item.get("catmat") for item in praticados if item.get("catmat")})
+        considerados["precos_praticados_precos"] = len(praticados)
+        for item in praticados:
+            extra = {k: v for k, v in item.items() if k not in {"fonte", "preco"}}
+            adicionar_preco("precos_praticados", item.get("preco"), extra)
+
+    stats = _stats(valores)
     return {
         "query": descricao,
         "fonte": fonte,
         "considerados": considerados,
-        "precos_encontrados": len(all_prices),
+        "precos_encontrados": len(valores),
         "stats": stats,
-        "detalhes": detalhes,
+        "detalhes": detalhes[:1000],
     }
+

@@ -295,3 +295,14 @@ def set_analise_resultado(db: Session, analise_id: int, resultado: str, status: 
 
 
 
+
+def search_licitacoes_by_objeto(db: Session, query: str):
+    if not query:
+        return []
+    pattern = f"%{query}%"
+    return (
+        db.query(models.Licitacao)
+        .filter(models.Licitacao.objeto_compra.ilike(pattern))
+        .all()
+
+    )
