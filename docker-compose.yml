@@ -7,10 +7,8 @@ services:
     restart: always
     environment:
       - POSTGRES_USER=licitai_user
-      - POSTGRES_PASSWORD=licitai_password
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=licitai
-    ports:
-      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -30,7 +28,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=licitai
       - POSTGRES_USER=licitai_user
-      - POSTGRES_PASSWORD=licitai_password
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
 volumes:
   postgres_data:
