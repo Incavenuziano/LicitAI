@@ -9,6 +9,8 @@ services:
       - POSTGRES_USER=licitai_user
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=licitai
+    ports:
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
