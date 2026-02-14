@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -10,6 +10,10 @@ import time
 import hashlib
 import logging
 import sys
+import os
+import json
+import base64
+import hmac
 
 try:
     # ExecuÃ§Ã£o a partir de backend/
@@ -69,6 +73,92 @@ app = FastAPI()
 
 logger = logging.getLogger("api")
 
+
+# Auth ---------------------------------------------------------------
+_auth_scheme = HTTPBearer(auto_error=False)
+AUTH_REQUIRED = os.getenv("BACKEND_REQUIRE_AUTH", "1").strip().lower() not in ("0", "false", "no")
+AUTH_SECRET = (os.getenv("API_AUTH_SECRET") or os.getenv("NEXTAUTH_SECRET") or "dev-change-me").encode("utf-8")
+TOKEN_TTL_SECONDS = int(os.getenv("API_TOKEN_TTL_SECONDS", "43200"))
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    pad = "=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode((value + pad).encode("ascii"))
+
+
+def _sign_payload(payload_b64: str) -> str:
+    sig = hmac.new(AUTH_SECRET, payload_b64.encode("ascii"), hashlib.sha256).digest()
+    return _b64url_encode(sig)
+
+
+def create_access_token(subject: str) -> str:
+    payload = {
+        "sub": subject,
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
+    }
+    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    return f"{payload_b64}.{_sign_payload(payload_b64)}"
+
+
+def decode_access_token(token: str) -> Optional[str]:
+    try:
+        payload_b64, sig = token.split(".", 1)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(_sign_payload(payload_b64), sig):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    exp = payload.get("exp")
+    sub = payload.get("sub")
+    if not isinstance(exp, int) or exp < int(time.time()):
+        return None
+    if not isinstance(sub, str) or not sub.strip():
+        return None
+    return sub
+
+
+def require_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_auth_scheme),
+) -> Optional[str]:
+    if not AUTH_REQUIRED:
+        return None
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
+    subject = decode_access_token(credentials.credentials)
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    return subject
+
+
+MAX_UPLOAD_BYTES = int(float(os.getenv("MAX_UPLOAD_MB", "25")) * 1024 * 1024)
+
+
+def _safe_filename(filename: Optional[str], fallback: str = "arquivo") -> str:
+    base = Path((filename or fallback).strip()).name
+    base = base.replace("\\", "_").replace("/", "_").replace(" ", "_")
+    return base or fallback
+
+
+def _validate_upload_payload(data: bytes, filename: str) -> None:
+    if not data:
+        raise HTTPException(status_code=400, detail="Arquivo vazio")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Limite: {MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
+        )
+    if not filename:
+        raise HTTPException(status_code=400, detail="Nome de arquivo invalido")
+
 # CORS
 origins = [
     "http://localhost:3000",
@@ -92,13 +182,20 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
     return crud.create_user(db=db, user=user)
 
-@app.post("/login", response_model=schemas.User)
+@app.post("/login", response_model=schemas.AuthLogin)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     email = (form_data.username or "").strip().lower()
     user = crud.get_user_by_email(db, email=email)
     if not user or not crud.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
-    return user
+    token = create_access_token(user.email)
+    return schemas.AuthLogin(
+        id=user.id,
+        email=user.email,
+        nickname=user.nickname,
+        access_token=token,
+        token_type="bearer",
+    )
 
 # Licitacoes
 @app.get("/licitacoes", response_model=List[schemas.Licitacao])
@@ -145,7 +242,12 @@ class AnaliseRequest(BaseModel):
     licitacao_ids: List[int]
 
 @app.post("/analises/", status_code=status.HTTP_202_ACCEPTED)
-def request_analise_de_licitacoes(request: AnaliseRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def request_analise_de_licitacoes(
+    request: AnaliseRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     logger.info(f"[analises] solicitacao recebida para {len(request.licitacao_ids)} licitacao(oes)")
     created = []
     for licitacao_id in request.licitacao_ids:
@@ -163,7 +265,10 @@ def read_root():
 
 # Buscar licitaÃ§Ãµes via PNCP e salvar no banco
 @app.post("/buscar_licitacoes")
-def buscar_licitacoes_endpoint(payload: schemas.BuscaLicitacoesRequest):
+def buscar_licitacoes_endpoint(
+    payload: schemas.BuscaLicitacoesRequest,
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     """Consulta licitaÃ§Ãµes no PNCP conforme filtros e salva no banco.
 
     Retorna um resumo da operaÃ§Ã£o conforme `salvar_licitacoes`.
@@ -191,7 +296,11 @@ class RagQuery(BaseModel):
 
 
 @app.post("/rag/indexar/{licitacao_id}")
-def rag_indexar(licitacao_id: int, db: Session = Depends(get_db)):
+def rag_indexar(
+    licitacao_id: int,
+    db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     """Extrai texto do edital principal e indexa em embeddings."""
     lic = crud.get_licitacao(db, licitacao_id)
     if not lic:
@@ -218,7 +327,12 @@ def rag_indexar(licitacao_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/rag/perguntar/{licitacao_id}")
-def rag_perguntar(licitacao_id: int, body: RagQuery, db: Session = Depends(get_db)):
+def rag_perguntar(
+    licitacao_id: int,
+    body: RagQuery,
+    db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     """Consulta os chunks mais relevantes para a pergunta enviada."""
     try:
         results = query_licitacao(db, licitacao_id, body.question, body.top_k)
@@ -299,7 +413,10 @@ class OportunidadesPayload(BaseModel):
 
 
 @app.post("/oportunidades/ativas")
-def oportunidades_ativas(payload: OportunidadesPayload):
+def oportunidades_ativas(
+    payload: OportunidadesPayload,
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     """Consulta propostas em aberto no PNCP (modo simples ou varredura ampla)."""
     try:
         import json as _json
@@ -367,7 +484,10 @@ async def websocket_busca_ampla(websocket: WebSocket):
         payload = OportunidadesPayload(**payload_data)
 
         # 2. Importa e chama a funÃ§Ã£o de busca com os parÃ¢metros recebidos
-        from src.agents.agente_busca import buscar_oportunidades_ativas_amplo_ws
+        try:
+            from src.agents.agente_busca import buscar_oportunidades_ativas_amplo_ws  # type: ignore
+        except ModuleNotFoundError:
+            from backend.src.agents.agente_busca import buscar_oportunidades_ativas_amplo_ws  # type: ignore
         
         await buscar_oportunidades_ativas_amplo_ws(
             websocket=websocket,
@@ -396,7 +516,10 @@ async def websocket_busca_ampla(websocket: WebSocket):
 
 
 @app.post("/licitacoes/salvar")
-def salvar_licitacoes_direct(payload: list[dict] | dict):
+def salvar_licitacoes_direct(
+    payload: list[dict] | dict,
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     """Salva licitaÃ§Ãµes a partir de um payload JSON (lista ou envelope com data).
 
     CompatÃ­vel com a estrutura retornada pelo PNCP (tanto publicaÃ§Ãµes quanto propostas).
@@ -600,15 +723,29 @@ def docbox_upload(
     tag: Optional[str] = Form(None),
     desc: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
 ):
+    lic = crud.get_licitacao(db, licitacao_id)
+    if not lic:
+        raise HTTPException(status_code=404, detail="Licitacao nao encontrada")
+
     # pasta de armazenamento
     base_dir = Path(__file__).resolve().parent / "storage" / "docbox" / str(licitacao_id)
     base_dir.mkdir(parents=True, exist_ok=True)
     ts = int(time.time())
-    original = (file.filename or 'arquivo').replace(" ", "_")
+    original = _safe_filename(file.filename, fallback="arquivo")
     safe_name = f"{ts}_{original}"
     dest = base_dir / safe_name
     data = file.file.read()
+    _validate_upload_payload(data, original)
+    try:
+        resolved_dest = dest.resolve()
+        if not resolved_dest.is_relative_to(base_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Nome de arquivo invalido")
+    except AttributeError:
+        # Compat fallback para Python sem is_relative_to
+        if str(base_dir.resolve()) not in str(dest.resolve()):
+            raise HTTPException(status_code=400, detail="Nome de arquivo invalido")
     with dest.open("wb") as f:
         f.write(data)
     size_bytes = len(data)
@@ -646,7 +783,11 @@ def docbox_upload(
 
 
 @app.delete("/docbox/{anexo_id}")
-def docbox_delete(anexo_id: int, db: Session = Depends(get_db)):
+def docbox_delete(
+    anexo_id: int,
+    db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     try:
         a = db.query(models.Anexo).filter(models.Anexo.id == anexo_id, models.Anexo.source == 'docbox').first()
         if not a:
@@ -673,6 +814,7 @@ def upload_edital(
     orgao_entidade_nome: Optional[str] = Form(None),
     objeto_compra: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
 ):
     # Armazena os uploads dentro do diretÃ³rio da aplicaÃ§Ã£o (/app/tmp/uploads)
     uploads_dir = Path(__file__).resolve().parent / "tmp" / "uploads"
@@ -680,10 +822,18 @@ def upload_edital(
 
     # LÃª e salva arquivo, computa metadados
     ts = int(time.time())
-    original = (file.filename or 'arquivo').replace(" ", "_")
+    original = _safe_filename(file.filename, fallback="arquivo")
     safe_name = f"edital_{ts}_{original}"
     dest = uploads_dir / safe_name
     data = file.file.read()
+    _validate_upload_payload(data, original)
+    try:
+        resolved_dest = dest.resolve()
+        if not resolved_dest.is_relative_to(uploads_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Nome de arquivo invalido")
+    except AttributeError:
+        if str(uploads_dir.resolve()) not in str(dest.resolve()):
+            raise HTTPException(status_code=400, detail="Nome de arquivo invalido")
     with dest.open("wb") as f:
         f.write(data)
     size_bytes = len(data)
@@ -752,7 +902,11 @@ def upload_edital(
 
 # RemoÃ§Ã£o de anexos de uma licitaÃ§Ã£o (e arquivo fÃ­sico)
 @app.delete("/licitacoes/{licitacao_id}/anexos")
-def delete_anexos(licitacao_id: int, db: Session = Depends(get_db)):
+def delete_anexos(
+    licitacao_id: int,
+    db: Session = Depends(get_db),
+    _auth_user: Optional[str] = Depends(require_auth),
+):
     lic = crud.get_licitacao(db, licitacao_id)
     if lic is None:
         raise HTTPException(status_code=404, detail="Licitacao nao encontrada")

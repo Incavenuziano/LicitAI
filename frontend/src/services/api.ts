@@ -1,6 +1,21 @@
-import { Licitacao } from '@/types';
+﻿import { Licitacao } from '@/types';
+import { getSession } from 'next-auth/react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers ?? {});
+  try {
+    if (typeof window !== 'undefined') {
+      const session = await getSession();
+      const token = (session?.user as any)?.backendToken as string | undefined;
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+    }
+  } catch {
+    // segue sem token para ambientes locais com auth desabilitada
+  }
+  return globalThis.fetch(input, { ...init, headers });
+}
 
 export interface LicitacaoFilters {
   q?: string;
@@ -18,39 +33,39 @@ export const getLicitacoes = async (filters: LicitacaoFilters = {}): Promise<Lic
     if (typeof filters.limit === 'number') params.append('limit', String(filters.limit));
     const qs = params.toString();
     const url = `${API_URL}/licitacoes${qs ? `?${qs}` : ''}`;
-    const res = await fetch(url);
+    const res = await authFetch(url);
     if (!res.ok) throw new Error(`Erro na API: ${res.status}`);
     const data = await res.json();
     return Array.isArray(data) ? (data as Licitacao[]) : [];
   } catch (e) {
-    console.error('Falha ao buscar licitações:', e);
+    console.error('Falha ao buscar licitaÃ§Ãµes:', e);
     return [];
   }
 };
 
 export const getLicitacaoById = async (id: number): Promise<Licitacao | null> => {
   try {
-    const res = await fetch(`${API_URL}/licitacoes/${id}`);
+    const res = await authFetch(`${API_URL}/licitacoes/${id}`);
     if (!res.ok) {
       if (res.status === 404) return null;
       throw new Error(`Erro na API: ${res.status}`);
     }
     return await res.json();
   } catch (e) {
-    console.error('Falha ao buscar licitação:', e);
+    console.error('Falha ao buscar licitaÃ§Ã£o:', e);
     return null;
   }
 };
 
 export const requestAnalises = async (licitacao_ids: number[]): Promise<any> => {
-  const res = await fetch(`${API_URL}/analises/`, {
+  const res = await authFetch(`${API_URL}/analises/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ licitacao_ids }),
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err || 'Falha ao solicitar análises');
+    throw new Error(err || 'Falha ao solicitar anÃ¡lises');
   }
   return res.json();
 };
@@ -64,22 +79,22 @@ export interface BuscarLicitacoesPayload {
 }
 
 export const buscarLicitacoes = async (payload: BuscarLicitacoesPayload): Promise<any> => {
-  const res = await fetch(`${API_URL}/buscar_licitacoes`, {
+  const res = await authFetch(`${API_URL}/buscar_licitacoes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err || 'Falha ao buscar licitações');
+    throw new Error(err || 'Falha ao buscar licitaÃ§Ãµes');
   }
   return res.json();
 };
 
-// RAG endpoints (podem retornar 404 se backend não expuser)
+// RAG endpoints (podem retornar 404 se backend nÃ£o expuser)
 export const ragIndexar = async (licitacaoId: number): Promise<{ indexed_chunks: number } | null> => {
   try {
-    const res = await fetch(`${API_URL}/rag/indexar/${licitacaoId}`, { method: 'POST' });
+    const res = await authFetch(`${API_URL}/rag/indexar/${licitacaoId}`, { method: 'POST' });
     if (!res.ok) return null;
     return await res.json();
   } catch (e) {
@@ -93,7 +108,7 @@ export const ragPerguntar = async (
   question: string,
   top_k: number = 4,
 ): Promise<{ results: { score: number; chunk: string }[] }> => {
-  const res = await fetch(`${API_URL}/rag/perguntar/${licitacaoId}`, {
+  const res = await authFetch(`${API_URL}/rag/perguntar/${licitacaoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, top_k }),
@@ -104,7 +119,7 @@ export const ragPerguntar = async (
   return res.json();
 };
 
-// Estatísticas (opcional)
+// EstatÃ­sticas (opcional)
 export interface StatsUF {
   uf: string;
   total: number;
@@ -112,24 +127,24 @@ export interface StatsUF {
 
 export const getStatsLicitacoesPorUf = async (): Promise<StatsUF[]> => {
   try {
-    const res = await fetch(`${API_URL}/stats/licitacoes-por-uf`);
+    const res = await authFetch(`${API_URL}/stats/licitacoes-por-uf`);
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? (data as StatsUF[]) : [];
   } catch (e) {
-    console.error('Falha ao buscar estatísticas por UF:', e);
+    console.error('Falha ao buscar estatÃ­sticas por UF:', e);
     return [];
   }
 };
 export const getAnalisesTotal = async (): Promise<number> => {
   try {
-    const res = await fetch(`${API_URL}/stats/analises`);
+    const res = await authFetch(`${API_URL}/stats/analises`);
     if (!res.ok) return 0;
     const data = await res.json();
     const total = Number(data?.total ?? 0);
     return Number.isFinite(total) ? total : 0;
   } catch (e) {
-    console.error("Falha ao buscar total de análises:", e);
+    console.error("Falha ao buscar total de anÃ¡lises:", e);
     return 0;
   }
 };
@@ -137,10 +152,10 @@ export const getAnalisesTotal = async (): Promise<number> => {
 
 // Anexos
 export const deleteAnexosPorLicitacao = async (licitacaoId: number): Promise<{ deleted: number }> => {
-  const res = await fetch(`${API_URL}/licitacoes/${licitacaoId}/anexos`, { method: 'DELETE' });
+  const res = await authFetch(`${API_URL}/licitacoes/${licitacaoId}/anexos`, { method: 'DELETE' });
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(txt || `Falha ao apagar anexos da licitação ${licitacaoId}`);
+    throw new Error(txt || `Falha ao apagar anexos da licitaÃ§Ã£o ${licitacaoId}`);
   }
   return res.json();
 };
@@ -163,7 +178,7 @@ export type OportunidadesPayload = {
 };
 
 export const getOportunidadesAtivas = async (payload: OportunidadesPayload): Promise<any[]> => {
-  const res = await fetch(`${API_URL}/oportunidades/ativas`, {
+  const res = await authFetch(`${API_URL}/oportunidades/ativas`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -177,45 +192,45 @@ export const getOportunidadesAtivas = async (payload: OportunidadesPayload): Pro
 };
 
 export const salvarLicitacoesDireto = async (items: any[]): Promise<any> => {
-  const res = await fetch(`${API_URL}/licitacoes/salvar`, {
+  const res = await authFetch(`${API_URL}/licitacoes/salvar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(items),
   });
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(txt || 'Falha ao salvar licitações');
+    throw new Error(txt || 'Falha ao salvar licitaÃ§Ãµes');
   }
   return res.json();
 };
 
-// Lista dinâmica de modalidades (descoberta via backend)
+// Lista dinÃ¢mica de modalidades (descoberta via backend)
 export type ModalidadeInfo = { code: number; label: string };
 export const getPncpModalidades = async (): Promise<ModalidadeInfo[]> => {
-  const res = await fetch(`${API_URL}/pncp/modalidades`);
+  const res = await authFetch(`${API_URL}/pncp/modalidades`);
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? (data as ModalidadeInfo[]) : [];
 };
 
-// Série histórica de preços
+// SÃ©rie histÃ³rica de preÃ§os
 export type SeriePrecosPoint = { date: string; value: number; fonte: string };
 export type SeriePrecosResponse = { mode: string; series: SeriePrecosPoint[]; stats: { count: number; min: number | null; max: number | null; mean: number | null } };
 
 export const getSeriePrecos = async (payload: { cnpj?: string; descricao?: string; fonte?: string; data_inicio?: string; data_fim?: string }): Promise<SeriePrecosResponse> => {
-  const res = await fetch(`${API_URL}/precos/serie`, {
+  const res = await authFetch(`${API_URL}/precos/serie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(txt || 'Falha ao obter série de preços');
+    throw new Error(txt || 'Falha ao obter sÃ©rie de preÃ§os');
   }
   return res.json();
 };
 
-// Pesquisa agregada de preços por item (resumo)
+// Pesquisa agregada de preÃ§os por item (resumo)
 export type PesquisaPrecoResponse = {
   query: string;
   fonte: string;
@@ -228,15 +243,15 @@ export const pesquisarPrecosPorItem = async (descricao: string, fonte: 'comprasg
   const url = new URL(`${API_URL}/pesquisa/precos_por_item`);
   url.searchParams.set('descricao', descricao);
   url.searchParams.set('fonte', fonte);
-  const res = await fetch(url.toString());
+  const res = await authFetch(url.toString());
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(txt || 'Falha na pesquisa de preços');
+    throw new Error(txt || 'Falha na pesquisa de preÃ§os');
   }
   const data = await res.json();
-  // mapear detalhes para {referencia_id, preco} se necessário
+  // mapear detalhes para {referencia_id, preco} se necessÃ¡rio
   const detalhes = Array.isArray(data?.detalhes)
-    ? data.detalhes.map((d: any) => ({ referencia_id: d.licitacao_id ?? d.contrato_id ?? d.fonte ?? '—', preco: Number(d.preco ?? d.valor ?? d) }))
+    ? data.detalhes.map((d: any) => ({ referencia_id: d.licitacao_id ?? d.contrato_id ?? d.fonte ?? 'â€”', preco: Number(d.preco ?? d.valor ?? d) }))
     : [];
   return {
     query: data?.query ?? descricao,
@@ -267,7 +282,7 @@ export const getPrecosVencedores = async (
   }
   const qs = params.toString();
   const url = `${API_URL}/licitacoes/${licitacaoId}/precos_vencedores${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Falha ao buscar precos vencedores');
@@ -277,11 +292,11 @@ export const getPrecosVencedores = async (
 
 // DocBox
 
-// DocBox (upload e associação)
+// DocBox (upload e associaÃ§Ã£o)
 export type DocBoxItem = { id: number; filename: string; size_bytes: number; sha256: string; created_at: string | null; meta?: string | null };
 
 export const docboxList = async (licitacaoId: number): Promise<DocBoxItem[]> => {
-  const res = await fetch(`${API_URL}/docbox/${licitacaoId}`);
+  const res = await authFetch(`${API_URL}/docbox/${licitacaoId}`);
   if (!res.ok) return [];
   return res.json();
 };
@@ -292,7 +307,7 @@ export const docboxUpload = async (licitacaoId: number, file: File, tag?: string
   form.append('file', file);
   if (tag) form.append('tag', tag);
   if (desc) form.append('desc', desc);
-  const res = await fetch(`${API_URL}/docbox/upload`, { method: 'POST', body: form });
+  const res = await authFetch(`${API_URL}/docbox/upload`, { method: 'POST', body: form });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Falha no upload do DocBox');
@@ -301,10 +316,12 @@ export const docboxUpload = async (licitacaoId: number, file: File, tag?: string
 };
 
 export const docboxDelete = async (anexoId: number): Promise<{ deleted: boolean }> => {
-  const res = await fetch(`${API_URL}/docbox/${anexoId}`, { method: 'DELETE' });
+  const res = await authFetch(`${API_URL}/docbox/${anexoId}`, { method: 'DELETE' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Falha ao remover documento');
   }
   return res.json();
 };
+
+

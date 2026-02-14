@@ -1,4 +1,7 @@
 ﻿import asyncio
+import os
+
+import pytest
 
 from backend.src.services.precos_praticados import (
     ComprasGovPrecoClient,
@@ -6,6 +9,11 @@ from backend.src.services.precos_praticados import (
 )
 
 CATMAT_EXAMPLE = 99830  # item amplamente utilizado (arma de fogo de pequeno porte)
+RUN_ONLINE_TESTS = os.getenv("RUN_ONLINE_TESTS", "0").strip().lower() in ("1", "true", "yes")
+pytestmark = pytest.mark.skipif(
+    not RUN_ONLINE_TESTS,
+    reason="Teste de integracao externo. Defina RUN_ONLINE_TESTS=1 para habilitar.",
+)
 
 
 def test_consultar_material_por_catmat_retorna_precos():

@@ -21,6 +21,11 @@ class User(UserBase):
         from_attributes = True
 
 
+class AuthLogin(User):
+    access_token: str
+    token_type: str = "bearer"
+
+
 # --- Esquemas para Análise ---
 # Definido antes de Licitação para que Licitação possa referenciá-lo
 

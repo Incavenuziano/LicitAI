@@ -568,13 +568,28 @@ def _prepare_text_from_pdf(anexo_path: Path) -> Optional[str]:
 def _generate_complete_analysis(licitacao: models.Licitacao, texto: str) -> Tuple[str, Dict[str, Any]]:
     if not texto:
         raise ValueError("Nenhum texto extraido para a analise.")
-    if run_edital_analysis is None:
-        raise RuntimeError("run_edital_analysis indisponivel. Configure o agente Agno/Gemini.")
-
     titulo = f"Analise do Edital: { (licitacao.objeto_compra or '').strip() or 'Sem objeto definido' }"
-    resultado_md = run_edital_analysis(texto=texto, titulo_secao=titulo)  # type: ignore[arg-type]
-    if not isinstance(resultado_md, str):
-        resultado_md = str(resultado_md)
+    resultado_md: str
+    if run_edital_analysis is None:
+        resumo_simples, _ = _analisar_texto_edital_enriquecida(texto)
+        resultado_md = (
+            "### Analise automatica (modo degradado)\n\n"
+            "A integracao com Agno/Gemini nao esta disponivel neste ambiente.\n\n"
+            f"{resumo_simples}\n"
+        )
+    else:
+        try:
+            resultado_md = run_edital_analysis(texto=texto, titulo_secao=titulo)  # type: ignore[arg-type]
+            if not isinstance(resultado_md, str):
+                resultado_md = str(resultado_md)
+        except Exception:
+            logger.warning("[analysis] Agno/Gemini indisponivel em runtime; aplicando fallback", exc_info=True)
+            resumo_simples, _ = _analisar_texto_edital_enriquecida(texto)
+            resultado_md = (
+                "### Analise automatica (modo degradado)\n\n"
+                "Nao foi possivel executar o modelo principal nesta rodada.\n\n"
+                f"{resumo_simples}\n"
+            )
 
     analysis_fields = _extract_structured_data_from_analysis(resultado_md)
 

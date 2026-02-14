@@ -4,6 +4,7 @@ from . import models, schemas
 from passlib.context import CryptContext
 from datetime import datetime
 import logging
+from pathlib import Path
 
 logger = logging.getLogger("crud")
 
@@ -108,6 +109,19 @@ def get_licitacao(db: Session, licitacao_id: int) -> models.Licitacao | None:
     )
 
 
+def get_licitacao_by_numero_controle(
+    db: Session, numero_controle_pncp: str
+) -> models.Licitacao | None:
+    if not numero_controle_pncp:
+        return None
+    return (
+        db.query(models.Licitacao)
+        .options(selectinload(models.Licitacao.analises))
+        .filter(models.Licitacao.numero_controle_pncp == numero_controle_pncp)
+        .first()
+    )
+
+
 def get_licitacao_count_by_uf(db: Session):
     """Conta o nÃºmero de licitaÃ§Ãµes por UF, retornando as que tÃªm UF definida."""
     return (
@@ -156,6 +170,24 @@ def delete_licitacao_completa(db: Session, licitacao_id: int) -> bool:
     exists = db.query(models.Licitacao.id).filter(models.Licitacao.id == licitacao_id).scalar()
     if not exists:
         return False
+
+    anexos = (
+        db.query(models.Anexo)
+        .filter(models.Anexo.licitacao_id == licitacao_id)
+        .all()
+    )
+    for anexo in anexos:
+        try:
+            if anexo.local_path:
+                path = Path(anexo.local_path)
+                if path.exists():
+                    path.unlink()
+        except Exception:
+            logger.warning(
+                "[crud] falha ao remover arquivo de anexo licitacao_id=%s path=%s",
+                licitacao_id,
+                getattr(anexo, "local_path", None),
+            )
 
     db.query(models.EditalEmbedding).filter(models.EditalEmbedding.licitacao_id == licitacao_id).delete(synchronize_session=False)
     db.query(models.Anexo).filter(models.Anexo.licitacao_id == licitacao_id).delete(synchronize_session=False)
@@ -226,6 +258,18 @@ def create_anexo(
     db.commit()
     db.refresh(an)
     return an
+
+
+def get_principal_anexo(db: Session, licitacao_id: int) -> models.Anexo | None:
+    return (
+        db.query(models.Anexo)
+        .filter(
+            models.Anexo.licitacao_id == licitacao_id,
+            models.Anexo.local_path.isnot(None),
+        )
+        .order_by(models.Anexo.score.desc(), models.Anexo.created_at.desc())
+        .first()
+    )
 
 
 def create_licitacao_analise(db: Session, licitacao_id: int) -> models.Analise:
